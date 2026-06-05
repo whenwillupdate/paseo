@@ -31,6 +31,13 @@
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
       }
+    },
+    "uphone": {
+      "extends": "production",
+      "distribution": "internal",
+      "env": {
+        "PASEO_IOS_BUNDLE_ID": "com.gaoshang.paseo"
+      }
     }
   },
   "submit": {

@@ -1,9 +1,8 @@
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 
-export const SIDEBAR_SESSION_SWIPE_REVEAL_THRESHOLD = 44;
 export const SIDEBAR_SESSION_SWIPE_ARCHIVE_THRESHOLD = 96;
 
-export type SidebarSessionSwipeDecision = "ignore" | "reset" | "reveal" | "archive";
+export type SidebarSessionSwipeDecision = "ignore" | "reset" | "archive" | "unarchive";
 
 export function canArchiveSidebarSession(agent: Pick<AggregatedAgent, "archivedAt">): boolean {
   return !agent.archivedAt;
@@ -19,10 +18,9 @@ export function resolveSidebarSessionSwipeDecision(input: {
   translationX: number;
   translationY: number;
   velocityX?: number;
-  revealThreshold?: number;
   archiveThreshold?: number;
+  archived?: boolean;
 }): SidebarSessionSwipeDecision {
-  const revealThreshold = input.revealThreshold ?? SIDEBAR_SESSION_SWIPE_REVEAL_THRESHOLD;
   const archiveThreshold = input.archiveThreshold ?? SIDEBAR_SESSION_SWIPE_ARCHIVE_THRESHOLD;
   const absX = Math.abs(input.translationX);
   const absY = Math.abs(input.translationY);
@@ -30,14 +28,11 @@ export function resolveSidebarSessionSwipeDecision(input: {
   if (input.translationX <= 0) {
     return "ignore";
   }
-  if (absY > 12 && absY > absX) {
+  if (absY > 16 && absY > absX * 1.3) {
     return "ignore";
   }
   if (input.translationX >= archiveThreshold || (input.velocityX ?? 0) > 850) {
-    return "archive";
-  }
-  if (input.translationX >= revealThreshold) {
-    return "reveal";
+    return input.archived ? "unarchive" : "archive";
   }
   return "reset";
 }

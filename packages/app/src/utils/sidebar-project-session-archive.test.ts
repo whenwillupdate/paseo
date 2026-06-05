@@ -15,12 +15,19 @@ describe("sidebar project session archive helpers", () => {
       "ignore",
     );
     expect(resolveSidebarSessionSwipeDecision({ translationX: 24, translationY: 2 })).toBe("reset");
-    expect(resolveSidebarSessionSwipeDecision({ translationX: 56, translationY: 2 })).toBe(
-      "reveal",
-    );
     expect(resolveSidebarSessionSwipeDecision({ translationX: 120, translationY: 2 })).toBe(
       "archive",
     );
+  });
+
+  it("resolves archived session swipes as unarchive", () => {
+    expect(
+      resolveSidebarSessionSwipeDecision({
+        translationX: 120,
+        translationY: 2,
+        archived: true,
+      }),
+    ).toBe("unarchive");
   });
 
   it("treats archived sessions as non-archivable", () => {

@@ -201,6 +201,49 @@ export function markAgentArchivedInHistoryCache(
   );
 }
 
+export function markAgentUnarchivedInHistoryPayload<T extends AgentHistoryQueryData | undefined>(
+  payload: T,
+  input: ArchiveAgentInput,
+): T {
+  if (!payload || !Array.isArray(payload.pages) || !input.agentId) {
+    return payload;
+  }
+
+  let changed = false;
+  const pages = payload.pages.map((page) => {
+    if (!Array.isArray(page.agents)) {
+      return page;
+    }
+
+    let pageChanged = false;
+    const agents = page.agents.map((agent) => {
+      if (agent.id !== input.agentId || !agent.archivedAt) {
+        return agent;
+      }
+      pageChanged = true;
+      changed = true;
+      return {
+        ...agent,
+        archivedAt: null,
+      };
+    });
+
+    return pageChanged ? { ...page, agents } : page;
+  });
+
+  return changed ? ({ ...payload, pages } as T) : payload;
+}
+
+export function markAgentUnarchivedInHistoryCache(
+  queryClient: QueryClient,
+  input: ArchiveAgentInput,
+): void {
+  queryClient.setQueryData<AgentHistoryQueryData | undefined>(
+    agentHistoryQueryKey(input.serverId),
+    (current) => markAgentUnarchivedInHistoryPayload(current, input),
+  );
+}
+
 export function clearArchiveAgentPending(input: IsAgentArchivingInput): void {
   setAgentArchiving({
     ...input,
@@ -320,6 +363,22 @@ function markAgentArchivedInStore(input: ArchiveAgentInput & { archivedAt: strin
   });
 }
 
+function markAgentUnarchivedInStore(input: ArchiveAgentInput): void {
+  const setAgents = useSessionStore.getState().setAgents;
+  setAgents(input.serverId, (prev) => {
+    const existing = prev.get(input.agentId);
+    if (!existing?.archivedAt) {
+      return prev;
+    }
+    const next = new Map(prev);
+    next.set(input.agentId, {
+      ...existing,
+      archivedAt: null,
+    });
+    return next;
+  });
+}
+
 interface ApplyArchivedAgentCloseResultsInput {
   queryClient: QueryClient;
   serverId: string;
@@ -360,6 +419,24 @@ export function applyArchivedAgentCloseResults(input: ApplyArchivedAgentCloseRes
       queryKey: agentHistoryQueryKey(input.serverId),
     });
   }
+}
+
+export function applyUnarchivedAgentRefreshResult(
+  queryClient: QueryClient,
+  input: ArchiveAgentInput,
+): void {
+  markAgentUnarchivedInStore(input);
+  markAgentUnarchivedInHistoryCache(queryClient, input);
+
+  void queryClient.invalidateQueries({
+    queryKey: ["sidebarAgentsList", input.serverId],
+  });
+  void queryClient.invalidateQueries({
+    queryKey: ["allAgents", input.serverId],
+  });
+  void queryClient.invalidateQueries({
+    queryKey: agentHistoryQueryKey(input.serverId),
+  });
 }
 
 function useArchiveAgentPendingQuery() {
@@ -459,6 +536,18 @@ export function useArchiveAgent() {
     [archiveMutateAsync],
   );
 
+  const unarchiveAgent = useCallback(
+    async (input: ArchiveAgentInput): Promise<void> => {
+      const client = useSessionStore.getState().sessions[input.serverId]?.client ?? null;
+      if (!client) {
+        throw new Error("Daemon client not available");
+      }
+      await client.refreshAgent(input.agentId);
+      applyUnarchivedAgentRefreshResult(queryClient, input);
+    },
+    [queryClient],
+  );
+
   const isArchivingAgent = useCallback(
     (input: ArchiveAgentInput): boolean => {
       const key = toArchiveKey(input);
@@ -472,6 +561,7 @@ export function useArchiveAgent() {
 
   return {
     archiveAgent,
+    unarchiveAgent,
     isArchivingAgent,
   };
 }

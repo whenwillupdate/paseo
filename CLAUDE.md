@@ -60,6 +60,26 @@ npm run format:check                 # Check formatting without writing
 
 See [docs/development.md](docs/development.md) for full setup, build sync requirements, and debugging.
 
+## iOS device install
+
+Install a production build directly to a connected iPhone via Xcode — no EAS or Expo account required. Only an Apple Developer account signed into Xcode is needed.
+
+```bash
+# 1. Clean prebuild (needed when switching variants or bundle IDs)
+cd packages/app && APP_VARIANT=production PASEO_IOS_BUNDLE_ID=com.gaoshang.paseo \
+  npx expo prebuild --platform ios --clean
+
+# 2. Build and install (Release for production, omit --configuration Release for debug)
+APP_VARIANT=production PASEO_IOS_BUNDLE_ID=com.gaoshang.paseo \
+  npx expo run:ios --device "Uphone" --configuration Release
+```
+
+- `APP_VARIANT=production` — selects the "Paseo" display name (vs "Paseo Debug" for development)
+- `PASEO_IOS_BUNDLE_ID` — overrides the bundle identifier; use a personal bundle ID (e.g. `com.gaoshang.paseo`) to avoid conflicting with the official `sh.paseo` provisioning profile
+- `--configuration Release` — builds the Release scheme; omit for Debug
+- List connected devices: `xcrun xctrace list devices`
+- Clean rebuild (`--clean`) is required when switching between development and production variants, or when changing bundle ID
+
 ## Critical rules
 
 - **NEVER restart the main Paseo daemon on port 6767 without permission** — it manages all running agents. If you're an agent, restarting it kills your own process.

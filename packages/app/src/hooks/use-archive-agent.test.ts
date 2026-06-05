@@ -6,6 +6,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { agentHistoryQueryKey } from "./agent-history-query-key";
 import {
   applyArchivedAgentCloseResults,
+  applyUnarchivedAgentRefreshResult,
   isAgentArchiving,
   removeAgentFromListPayload,
   selectPendingArchiveAgentIds,
@@ -209,6 +210,51 @@ describe("useArchiveAgent", () => {
       pages: [
         {
           agents: [{ id: "agent-1", archivedAt: new Date("2026-04-01T04:00:00.000Z") }],
+        },
+      ],
+      pageParams: [null],
+    });
+  });
+
+  it("applies unarchived agent refresh results to session state and invalidates cached lists", () => {
+    const queryClient = new QueryClient();
+    useSessionStore.getState().initializeSession("server-a", {} as DaemonClient);
+    useSessionStore
+      .getState()
+      .setAgents(
+        "server-a",
+        new Map([["agent-1", makeAgent({ archivedAt: new Date("2026-04-01T04:00:00.000Z") })]]),
+      );
+    queryClient.setQueryData(["sidebarAgentsList", "server-a"], {
+      entries: [{ agent: { id: "agent-1" } }],
+    });
+    queryClient.setQueryData(["allAgents", "server-a"], {
+      entries: [{ agent: { id: "agent-1" } }],
+    });
+    queryClient.setQueryData(agentHistoryQueryKey("server-a"), {
+      pages: [
+        {
+          agents: [{ id: "agent-1", archivedAt: new Date("2026-04-01T04:00:00.000Z") }],
+        },
+      ],
+      pageParams: [null],
+    });
+
+    applyUnarchivedAgentRefreshResult(queryClient, {
+      serverId: "server-a",
+      agentId: "agent-1",
+    });
+
+    expect(useSessionStore.getState().sessions["server-a"]?.agents.get("agent-1")?.archivedAt).toBe(
+      null,
+    );
+    expect(queryClient.getQueryState(["sidebarAgentsList", "server-a"])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(["allAgents", "server-a"])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(agentHistoryQueryKey("server-a"))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryData(agentHistoryQueryKey("server-a"))).toEqual({
+      pages: [
+        {
+          agents: [{ id: "agent-1", archivedAt: null }],
         },
       ],
       pageParams: [null],

@@ -6,6 +6,7 @@ import {
   ActionSheetIOS,
   ActivityIndicator,
   Animated,
+  Easing,
   PanResponder,
   StatusBar,
   ScrollView,
@@ -41,7 +42,6 @@ import {
   Archive,
   ChevronDown,
   ChevronRight,
-  Check,
   ExternalLink,
   FolderPlus,
   GitPullRequest,
@@ -133,7 +133,7 @@ import {
   canArchiveSidebarSession,
   isRiskySidebarSessionArchive,
   resolveSidebarSessionSwipeDecision,
-  SIDEBAR_SESSION_SWIPE_REVEAL_THRESHOLD,
+  SIDEBAR_SESSION_SWIPE_ARCHIVE_THRESHOLD,
 } from "@/utils/sidebar-project-session-archive";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 
@@ -149,7 +149,6 @@ const EMPTY_PROJECT_SESSION_DATA: SidebarProjectSessionData = {
   agents: [],
   counts: EMPTY_SESSION_COUNTS,
 };
-const SIDEBAR_SESSION_SWIPE_ACTION_WIDTH = 76;
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
@@ -162,7 +161,6 @@ const ThemedSettings = withUnistyles(Settings);
 const ThemedInbox = withUnistyles(Inbox);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedArchive = withUnistyles(Archive);
-const ThemedCheck = withUnistyles(Check);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -267,8 +265,6 @@ interface ProjectHeaderRowProps {
   menuController: ReturnType<typeof useContextMenu> | null;
   onRemoveProject?: () => void;
   removeProjectStatus?: "idle" | "pending";
-  onSelectSessions?: () => void;
-  canSelectSessions?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
 }
 
@@ -456,8 +452,6 @@ function ProjectRowTrailingActions({
   onWorkspacePress,
   onRemoveProject,
   removeProjectStatus,
-  onSelectSessions,
-  canSelectSessions = false,
 }: {
   project: SidebarProjectEntry;
   displayName: string;
@@ -470,8 +464,6 @@ function ProjectRowTrailingActions({
   onWorkspacePress?: () => void;
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
-  onSelectSessions?: () => void;
-  canSelectSessions?: boolean;
 }) {
   const [isImportSheetOpen, setIsImportSheetOpen] = useState(false);
   const openProject = useOpenProject(serverId);
@@ -552,8 +544,6 @@ function ProjectRowTrailingActions({
         >
           <ProjectKebabMenu
             projectKey={project.projectKey}
-            onSelectSessions={onSelectSessions}
-            canSelectSessions={canSelectSessions}
             onRemoveProject={onRemoveProject}
             removeProjectStatus={removeProjectStatus}
           />
@@ -578,14 +568,10 @@ function renderKebabTriggerIcon({ hovered }: { hovered?: boolean }) {
 
 function ProjectKebabMenu({
   projectKey,
-  onSelectSessions,
-  canSelectSessions,
   onRemoveProject,
   removeProjectStatus,
 }: {
   projectKey: string;
-  onSelectSessions?: () => void;
-  canSelectSessions: boolean;
   onRemoveProject: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
@@ -606,16 +592,6 @@ function ProjectKebabMenu({
         {renderKebabTriggerIcon}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220}>
-        {onSelectSessions ? (
-          <DropdownMenuItem
-            testID={`sidebar-project-menu-select-sessions-${projectKey}`}
-            leading={archiveLeadingIcon}
-            disabled={!canSelectSessions}
-            onSelect={onSelectSessions}
-          >
-            Select sessions
-          </DropdownMenuItem>
-        ) : null}
         {canOpenProjectSettings ? (
           <DropdownMenuItem
             testID={`sidebar-project-menu-open-settings-${projectKey}`}
@@ -1168,26 +1144,29 @@ async function confirmSidebarSessionArchiveIfNeeded(agents: AggregatedAgent[]): 
   });
 }
 
-function clampSidebarSessionSwipeOffset(value: number): number {
-  return Math.max(0, Math.min(SIDEBAR_SESSION_SWIPE_ACTION_WIDTH, value));
+function clampSidebarSessionSwipeOffset(value: number, rowWidth: number): number {
+  const maxOffset = Math.max(rowWidth + 48, SIDEBAR_SESSION_SWIPE_ARCHIVE_THRESHOLD + 48);
+  return Math.max(0, Math.min(maxOffset, value));
+}
+
+function startSidebarSessionAnimation(animation: Animated.CompositeAnimation): Promise<boolean> {
+  return new Promise((resolve) => {
+    animation.start(({ finished }) => resolve(finished));
+  });
 }
 
 function ProjectSessionRow({
   agent,
   onPress,
   onArchive,
+  onUnarchive,
   isArchiving,
-  selectionMode,
-  selected,
-  onToggleSelected,
 }: {
   agent: AggregatedAgent;
   onPress: (agent: AggregatedAgent) => void;
-  onArchive: (agent: AggregatedAgent) => void;
+  onArchive: (agent: AggregatedAgent) => Promise<boolean>;
+  onUnarchive: (agent: AggregatedAgent) => Promise<boolean>;
   isArchiving: boolean;
-  selectionMode: boolean;
-  selected: boolean;
-  onToggleSelected: (agent: AggregatedAgent) => void;
 }) {
   const { theme } = useUnistyles();
   const isCompactFormFactor = useIsCompactFormFactor();
@@ -1197,145 +1176,354 @@ function ProjectSessionRow({
   const title = agent.title || "New session";
   const timeAgo = formatTimeAgo(agent.lastActivityAt);
   const canArchive = canArchiveSidebarSession(agent);
+  const canUnarchive = Boolean(agent.archivedAt);
   const swipeOffset = useRef(new Animated.Value(0)).current;
+  const rowHeight = useRef(new Animated.Value(0)).current;
+  const rowMargin = useRef(new Animated.Value(theme.spacing[1])).current;
+  const rowOpacity = useRef(new Animated.Value(1)).current;
   const swipeStartOffsetRef = useRef(0);
+  const rowWidthRef = useRef(0);
+  const measuredHeightRef = useRef(0);
+  const isCommittingRef = useRef(false);
+  const hapticFiredRef = useRef(false);
+  const iconScale = useRef(new Animated.Value(1)).current;
+  const [hasMeasuredRow, setHasMeasuredRow] = useState(false);
+  const [isCommitting, setIsCommitting] = useState(false);
   const swipeEnabled =
-    Platform.OS === "ios" && isCompactFormFactor && !selectionMode && canArchive && !isArchiving;
+    Platform.OS === "ios" &&
+    isCompactFormFactor &&
+    (canArchive || canUnarchive) &&
+    !isArchiving &&
+    !isCommitting;
   let statusLabel: string = agent.status;
   if (agent.requiresAttention) {
     statusLabel = "Attention";
   } else if (agent.status === "initializing") {
     statusLabel = "Starting";
   }
+
+  const restoreExpandedRow = useCallback(
+    (animated = true) => {
+      const measuredHeight = measuredHeightRef.current;
+      const resetValues = () => {
+        swipeOffset.setValue(0);
+        rowOpacity.setValue(1);
+        rowMargin.setValue(theme.spacing[1]);
+        iconScale.setValue(1);
+        if (measuredHeight > 0) {
+          rowHeight.setValue(measuredHeight);
+        }
+      };
+
+      if (!animated) {
+        resetValues();
+        return;
+      }
+
+      Animated.parallel([
+        Animated.spring(swipeOffset, {
+          toValue: 0,
+          useNativeDriver: true,
+          bounciness: 0,
+          speed: 18,
+        }),
+        Animated.timing(rowOpacity, {
+          toValue: 1,
+          duration: 120,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(rowMargin, {
+          toValue: theme.spacing[1],
+          duration: 180,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: false,
+        }),
+        ...(measuredHeight > 0
+          ? [
+              Animated.timing(rowHeight, {
+                toValue: measuredHeight,
+                duration: 180,
+                easing: Easing.out(Easing.quad),
+                useNativeDriver: false,
+              }),
+            ]
+          : []),
+      ]).start();
+    },
+    [rowHeight, rowMargin, rowOpacity, swipeOffset, theme.spacing],
+  );
+
+  useEffect(() => {
+    if (!isCommitting) {
+      restoreExpandedRow(false);
+    }
+  }, [agent.archivedAt, isCommitting, restoreExpandedRow]);
+
   const resetSwipe = useCallback(() => {
-    Animated.spring(swipeOffset, {
-      toValue: 0,
-      useNativeDriver: true,
-      bounciness: 0,
-      speed: 18,
-    }).start();
-  }, [swipeOffset]);
-  const revealSwipe = useCallback(() => {
-    Animated.spring(swipeOffset, {
-      toValue: SIDEBAR_SESSION_SWIPE_REVEAL_THRESHOLD,
-      useNativeDriver: true,
-      bounciness: 0,
-      speed: 18,
-    }).start();
-  }, [swipeOffset]);
-  const handleArchive = useCallback(() => {
+    restoreExpandedRow(true);
+  }, [restoreExpandedRow]);
+
+  const handleRowLayout = useCallback(
+    (event: { nativeEvent: { layout: { height: number; width: number } } }) => {
+      const { height, width } = event.nativeEvent.layout;
+      rowWidthRef.current = width;
+      if (height <= 0 || isCommittingRef.current) {
+        return;
+      }
+      measuredHeightRef.current = height;
+      if (!hasMeasuredRow) {
+        rowHeight.setValue(height);
+        setHasMeasuredRow(true);
+      }
+    },
+    [hasMeasuredRow, rowHeight],
+  );
+
+  const runCommittedSwipe = useCallback(
+    async (action: "archive" | "unarchive") => {
+      if (isCommittingRef.current) {
+        return;
+      }
+
+      if (action === "archive") {
+        const confirmed = await confirmSidebarSessionArchiveIfNeeded([agent]);
+        if (!confirmed) {
+          resetSwipe();
+          return;
+        }
+      }
+
+      isCommittingRef.current = true;
+      setIsCommitting(true);
+
+      const slideDistance = Math.max(
+        rowWidthRef.current + 48,
+        SIDEBAR_SESSION_SWIPE_ARCHIVE_THRESHOLD + 48,
+      );
+      const slideFinished = await startSidebarSessionAnimation(
+        Animated.parallel([
+          Animated.timing(swipeOffset, {
+            toValue: slideDistance,
+            duration: 180,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(rowOpacity, {
+            toValue: 0,
+            duration: 160,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+
+      if (!slideFinished) {
+        isCommittingRef.current = false;
+        setIsCommitting(false);
+        resetSwipe();
+        return;
+      }
+
+      await startSidebarSessionAnimation(
+        Animated.parallel([
+          Animated.timing(rowHeight, {
+            toValue: 0,
+            duration: 170,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: false,
+          }),
+          Animated.timing(rowMargin, {
+            toValue: 0,
+            duration: 170,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: false,
+          }),
+        ]),
+      );
+
+      const didComplete = action === "archive" ? await onArchive(agent) : await onUnarchive(agent);
+      isCommittingRef.current = false;
+      setIsCommitting(false);
+
+      if (!didComplete) {
+        resetSwipe();
+      }
+    },
+    [agent, onArchive, onUnarchive, resetSwipe, rowHeight, rowMargin, rowOpacity, swipeOffset],
+  );
+
+  const handleArchive = useCallback(async () => {
     if (!canArchive || isArchiving) {
       return;
     }
-    resetSwipe();
-    onArchive(agent);
+    const confirmed = await confirmSidebarSessionArchiveIfNeeded([agent]);
+    if (!confirmed) {
+      resetSwipe();
+      return;
+    }
+    const didArchive = await onArchive(agent);
+    if (!didArchive) {
+      resetSwipe();
+    }
   }, [agent, canArchive, isArchiving, onArchive, resetSwipe]);
+
   const handlePress = useCallback(() => {
-    if (selectionMode) {
-      if (canArchive) {
-        onToggleSelected(agent);
-      }
+    if (isCommittingRef.current) {
       return;
     }
     onPress(agent);
-  }, [agent, canArchive, onPress, onToggleSelected, selectionMode]);
+  }, [agent, onPress]);
+
   const handleArchiveMenuSelect = useCallback(() => {
-    handleArchive();
+    void handleArchive();
   }, [handleArchive]);
+
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gestureState) =>
+        onMoveShouldSetPanResponderCapture: (_event, gestureState) =>
           swipeEnabled &&
           gestureState.dx > 14 &&
           resolveSidebarSessionSwipeDecision({
             translationX: gestureState.dx,
             translationY: gestureState.dy,
           }) !== "ignore",
+        onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: () => {
           swipeOffset.stopAnimation((value) => {
             swipeStartOffsetRef.current = typeof value === "number" ? value : 0;
           });
+          hapticFiredRef.current = false;
+          iconScale.setValue(1);
         },
         onPanResponderMove: (_event, gestureState) => {
           const nextOffset = clampSidebarSessionSwipeOffset(
             swipeStartOffsetRef.current + gestureState.dx,
+            rowWidthRef.current,
           );
           swipeOffset.setValue(nextOffset);
+
+          const crossedThreshold = nextOffset >= SIDEBAR_SESSION_SWIPE_ARCHIVE_THRESHOLD;
+          if (crossedThreshold && !hapticFiredRef.current) {
+            hapticFiredRef.current = true;
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            Animated.spring(iconScale, {
+              toValue: 1.3,
+              useNativeDriver: true,
+              bounciness: 8,
+              speed: 12,
+            }).start();
+          } else if (!crossedThreshold && hapticFiredRef.current) {
+            hapticFiredRef.current = false;
+            Animated.spring(iconScale, {
+              toValue: 1,
+              useNativeDriver: true,
+              bounciness: 0,
+              speed: 12,
+            }).start();
+          }
         },
         onPanResponderRelease: (_event, gestureState: PanResponderGestureState) => {
+          hapticFiredRef.current = false;
+          iconScale.setValue(1);
           const decision = resolveSidebarSessionSwipeDecision({
             translationX: swipeStartOffsetRef.current + gestureState.dx,
             translationY: gestureState.dy,
             velocityX: gestureState.vx,
+            archived: canUnarchive,
           });
           if (decision === "archive") {
-            handleArchive();
+            void runCommittedSwipe("archive");
             return;
           }
-          if (decision === "reveal") {
-            revealSwipe();
+          if (decision === "unarchive") {
+            void runCommittedSwipe("unarchive");
             return;
           }
           resetSwipe();
         },
-        onPanResponderTerminate: resetSwipe,
+        onPanResponderTerminate: () => {
+          hapticFiredRef.current = false;
+          iconScale.setValue(1);
+          resetSwipe();
+        },
       }),
-    [handleArchive, resetSwipe, revealSwipe, swipeEnabled, swipeOffset],
+    [canUnarchive, resetSwipe, runCommittedSwipe, swipeEnabled, swipeOffset],
   );
+
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.projectSessionRow,
       (hovered || pressed) && styles.projectSessionRowHovered,
-      selected && styles.projectSessionRowSelected,
       isArchiving && styles.projectSessionRowArchiving,
     ],
-    [isArchiving, selected],
+    [isArchiving],
   );
+
   const animatedRowStyle = useMemo(
-    () => [{ transform: [{ translateX: swipeOffset }] }],
-    [swipeOffset],
+    () => [
+      {
+        backgroundColor: theme.colors.surfaceSidebar,
+        opacity: rowOpacity,
+        transform: [{ translateX: swipeOffset }],
+      },
+    ],
+    [rowOpacity, swipeOffset, theme.colors.surfaceSidebar],
+  );
+  const animatedContainerStyle = useMemo(
+    () => [
+      styles.projectSessionSwipeContainer,
+      hasMeasuredRow
+        ? {
+            height: rowHeight,
+            marginBottom: rowMargin,
+          }
+        : null,
+    ],
+    [hasMeasuredRow, rowHeight, rowMargin],
+  );
+  const swipeBackgroundStyle = useMemo(
+    () => [
+      styles.projectSessionSwipeBackground,
+      canUnarchive && styles.projectSessionSwipeBackgroundUnarchive,
+    ],
+    [canUnarchive],
+  );
+  const swipeBackgroundIcon = canUnarchive ? (
+    <Inbox size={17} color={theme.colors.foregroundMuted} />
+  ) : (
+    <Archive size={17} color={theme.colors.foregroundMuted} />
   );
   const accessibilityState = useMemo(
     () => ({
-      selected: selectionMode ? selected : undefined,
-      disabled: selectionMode && !canArchive ? true : undefined,
+      disabled: isCommitting || isArchiving ? true : undefined,
     }),
-    [canArchive, selected, selectionMode],
-  );
-  const selectionCircleStyle = useMemo(
-    () => [
-      styles.projectSessionSelectionCircle,
-      selected && styles.projectSessionSelectionCircleSelected,
-      !canArchive && styles.projectSessionSelectionCircleDisabled,
-    ],
-    [canArchive, selected],
+    [isArchiving, isCommitting],
   );
 
   return (
     <ContextMenu>
-      <View style={styles.projectSessionSwipeContainer}>
+      <Animated.View style={animatedContainerStyle}>
         {swipeEnabled ? (
-          <Pressable
-            style={styles.projectSessionSwipeAction}
-            accessibilityRole="button"
-            accessibilityLabel={`Archive ${title}`}
-            onPress={handleArchive}
-            testID={`sidebar-project-session-archive-action-${agent.serverId}-${agent.id}`}
-          >
-            <Archive size={15} color={theme.colors.destructive} />
-            <Text style={styles.projectSessionSwipeActionText}>Archive</Text>
-          </Pressable>
+          <View style={swipeBackgroundStyle} pointerEvents="none">
+            <Animated.View
+              style={[styles.projectSessionSwipeIconSlot, { transform: [{ scale: iconScale }] }]}
+            >
+              {swipeBackgroundIcon}
+            </Animated.View>
+          </View>
         ) : null}
         <Animated.View
           {...panResponder.panHandlers}
           style={animatedRowStyle}
+          onLayout={handleRowLayout}
           testID={`sidebar-project-session-swipe-${agent.serverId}-${agent.id}`}
         >
           <ContextMenuTrigger
-            enabled={!selectionMode && canArchive}
-            enabledOnMobile
-            enabledOnWeb={false}
+            enabled={canArchive}
+            enabledOnMobile={false}
+            enabledOnWeb
             longPressDelayMs={350}
             style={rowStyle}
             onPress={handlePress}
@@ -1344,15 +1532,9 @@ function ProjectSessionRow({
             accessibilityLabel={`${sidebarSessionProviderLabel(agent.provider)} session ${title}`}
             testID={`sidebar-project-session-${agent.serverId}-${agent.id}`}
           >
-            {selectionMode ? (
-              <View style={selectionCircleStyle}>
-                {selected ? <ThemedCheck size={12} uniProps={foregroundColorMapping} /> : null}
-              </View>
-            ) : (
-              <View style={styles.projectSessionIconSlot}>
-                <ProviderIcon size={14} color={providerColor} />
-              </View>
-            )}
+            <View style={styles.projectSessionIconSlot}>
+              <ProviderIcon size={14} color={providerColor} />
+            </View>
             <View style={styles.projectSessionContent}>
               <View style={styles.projectSessionTitleRow}>
                 <Text style={styles.projectSessionTitle} numberOfLines={1}>
@@ -1371,7 +1553,7 @@ function ProjectSessionRow({
             ) : null}
           </ContextMenuTrigger>
         </Animated.View>
-      </View>
+      </Animated.View>
       <ContextMenuContent
         align="start"
         width={220}
@@ -1398,18 +1580,14 @@ function ProjectSessionList({
   data,
   onAgentPress,
   onArchiveAgent,
+  onUnarchiveAgent,
   isAgentArchiving,
-  selectionMode,
-  selectedAgentIds,
-  onToggleAgentSelected,
 }: {
   data: SidebarProjectSessionData;
   onAgentPress: (agent: AggregatedAgent) => void;
-  onArchiveAgent: (agent: AggregatedAgent) => void;
+  onArchiveAgent: (agent: AggregatedAgent) => Promise<boolean>;
+  onUnarchiveAgent: (agent: AggregatedAgent) => Promise<boolean>;
   isAgentArchiving: (agent: AggregatedAgent) => boolean;
-  selectionMode: boolean;
-  selectedAgentIds: ReadonlySet<string>;
-  onToggleAgentSelected: (agent: AggregatedAgent) => void;
 }) {
   if (data.agents.length === 0) {
     return (
@@ -1427,78 +1605,10 @@ function ProjectSessionList({
           agent={agent}
           onPress={onAgentPress}
           onArchive={onArchiveAgent}
+          onUnarchive={onUnarchiveAgent}
           isArchiving={isAgentArchiving(agent)}
-          selectionMode={selectionMode}
-          selected={selectedAgentIds.has(agent.id)}
-          onToggleSelected={onToggleAgentSelected}
         />
       ))}
-    </View>
-  );
-}
-
-function ProjectSessionSelectionToolbar({
-  selectedCount,
-  totalCount,
-  isArchiving,
-  onCancel,
-  onSelectAll,
-  onArchiveSelected,
-}: {
-  selectedCount: number;
-  totalCount: number;
-  isArchiving: boolean;
-  onCancel: () => void;
-  onSelectAll: () => void;
-  onArchiveSelected: () => void;
-}) {
-  const canArchive = selectedCount > 0 && !isArchiving;
-  const archiveButtonStyle = useMemo(
-    () => [
-      styles.projectSessionSelectionArchiveButton,
-      !canArchive && styles.projectSessionSelectionArchiveButtonDisabled,
-    ],
-    [canArchive],
-  );
-  return (
-    <View
-      style={styles.projectSessionSelectionToolbar}
-      testID="sidebar-project-session-selection-toolbar"
-    >
-      <Pressable
-        style={styles.projectSessionSelectionToolbarButton}
-        accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel="Cancel session selection"
-        onPress={onCancel}
-        disabled={isArchiving}
-        testID="sidebar-project-session-selection-cancel"
-      >
-        <Text style={styles.projectSessionSelectionToolbarText}>Cancel</Text>
-      </Pressable>
-      <Pressable
-        style={styles.projectSessionSelectionToolbarButton}
-        accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel="Select all sessions"
-        onPress={onSelectAll}
-        disabled={isArchiving || totalCount === 0}
-        testID="sidebar-project-session-selection-select-all"
-      >
-        <Text style={styles.projectSessionSelectionToolbarText}>Select all</Text>
-      </Pressable>
-      <Pressable
-        style={archiveButtonStyle}
-        accessibilityRole={platformIsWeb ? undefined : "button"}
-        accessibilityLabel={`Archive ${selectedCount} selected sessions`}
-        onPress={onArchiveSelected}
-        disabled={!canArchive}
-        testID="sidebar-project-session-selection-archive"
-      >
-        {isArchiving ? (
-          <ThemedActivityIndicator size={13} uniProps={foregroundColorMapping} />
-        ) : (
-          <Text style={styles.projectSessionSelectionArchiveText}>Archive {selectedCount}</Text>
-        )}
-      </Pressable>
     </View>
   );
 }
@@ -1524,8 +1634,6 @@ function ProjectHeaderRow({
   menuController,
   onRemoveProject,
   removeProjectStatus = "idle",
-  onSelectSessions,
-  canSelectSessions = false,
   dragHandleProps,
 }: ProjectHeaderRowProps) {
   const [isHovered, setIsHovered] = useState(false);
@@ -1611,8 +1719,6 @@ function ProjectHeaderRow({
         onWorkspacePress={onWorkspacePress}
         onRemoveProject={onRemoveProject}
         removeProjectStatus={removeProjectStatus}
-        onSelectSessions={onSelectSessions}
-        canSelectSessions={canSelectSessions}
       />
       {showShortcutBadge && shortcutNumber !== null ? (
         <View style={styles.projectShortcutBadgeOverlay} pointerEvents="none">
@@ -1951,141 +2057,48 @@ function ProjectBlock({
   });
 
   const toast = useToast();
-  const { archiveAgent, isArchivingAgent } = useArchiveAgent();
+  const { archiveAgent, unarchiveAgent, isArchivingAgent } = useArchiveAgent();
   const [isRemovingProject, setIsRemovingProject] = useState(false);
-  const [sessionSelectionMode, setSessionSelectionMode] = useState(false);
-  const [selectedSessionIds, setSelectedSessionIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const [isBulkArchivingSessions, setIsBulkArchivingSessions] = useState(false);
-  const archivableSessions = useMemo(
-    () => projectSessions.agents.filter(canArchiveSidebarSession),
-    [projectSessions.agents],
-  );
-  const archivableSessionIds = useMemo(
-    () => new Set(archivableSessions.map((agent) => agent.id)),
-    [archivableSessions],
-  );
 
-  useEffect(() => {
-    setSelectedSessionIds((current) => {
-      const next = new Set<string>();
-      for (const agentId of current) {
-        if (archivableSessionIds.has(agentId)) {
-          next.add(agentId);
-        }
-      }
-      return next.size === current.size ? current : next;
-    });
-
-    if (sessionSelectionMode && archivableSessions.length === 0) {
-      setSessionSelectionMode(false);
-    }
-  }, [archivableSessionIds, archivableSessions.length, sessionSelectionMode]);
-
-  const archiveSessions = useCallback(
-    async (agents: AggregatedAgent[]) => {
-      const targets = agents.filter(canArchiveSidebarSession);
-      if (targets.length === 0) {
+  const handleArchiveAgent = useCallback(
+    async (agent: AggregatedAgent) => {
+      if (!canArchiveSidebarSession(agent)) {
         return false;
       }
-
-      const confirmed = await confirmSidebarSessionArchiveIfNeeded(targets);
-      if (!confirmed) {
+      try {
+        await archiveAgent({ serverId: agent.serverId, agentId: agent.id });
+        return true;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to archive session");
         return false;
       }
-
-      const results = await Promise.allSettled(
-        targets.map((agent) => archiveAgent({ serverId: agent.serverId, agentId: agent.id })),
-      );
-      const failureCount = results.filter((result) => result.status === "rejected").length;
-      if (failureCount > 0) {
-        toast.error(
-          failureCount === 1
-            ? "Failed to archive a session"
-            : `Failed to archive ${failureCount} sessions`,
-        );
-      }
-      return true;
     },
     [archiveAgent, toast],
   );
 
-  const handleArchiveAgent = useCallback(
-    (agent: AggregatedAgent) => {
-      void archiveSessions([agent]).catch((error) => {
-        toast.error(error instanceof Error ? error.message : "Failed to archive session");
-      });
-    },
-    [archiveSessions, toast],
-  );
-
-  const handleBeginSessionSelection = useCallback(() => {
-    if (archivableSessions.length === 0) {
-      return;
-    }
-    setSelectedSessionIds(new Set());
-    setSessionSelectionMode(true);
-  }, [archivableSessions.length]);
-
-  const handleCancelSessionSelection = useCallback(() => {
-    setSessionSelectionMode(false);
-    setSelectedSessionIds(new Set());
-  }, []);
-
-  const handleSelectAllSessions = useCallback(() => {
-    setSelectedSessionIds(new Set(archivableSessions.map((agent) => agent.id)));
-  }, [archivableSessions]);
-
-  const handleToggleSelectedSession = useCallback((agent: AggregatedAgent) => {
-    if (!canArchiveSidebarSession(agent)) {
-      return;
-    }
-    setSelectedSessionIds((current) => {
-      const next = new Set(current);
-      if (next.has(agent.id)) {
-        next.delete(agent.id);
-      } else {
-        next.add(agent.id);
+  const handleUnarchiveAgent = useCallback(
+    async (agent: AggregatedAgent) => {
+      if (!agent.archivedAt) {
+        return false;
       }
-      return next;
-    });
-  }, []);
-
-  const handleArchiveSelectedSessions = useCallback(() => {
-    if (isBulkArchivingSessions) {
-      return;
-    }
-    const selectedAgents = archivableSessions.filter((agent) => selectedSessionIds.has(agent.id));
-    if (selectedAgents.length === 0) {
-      return;
-    }
-
-    setIsBulkArchivingSessions(true);
-    void archiveSessions(selectedAgents)
-      .then((didArchive) => {
-        if (didArchive) {
-          setSessionSelectionMode(false);
-          setSelectedSessionIds(new Set());
-        }
-        return undefined;
-      })
-      .catch((error) => {
-        toast.error(error instanceof Error ? error.message : "Failed to archive sessions");
-      })
-      .finally(() => {
-        setIsBulkArchivingSessions(false);
-      });
-  }, [archivableSessions, archiveSessions, isBulkArchivingSessions, selectedSessionIds, toast]);
+      try {
+        await unarchiveAgent({ serverId: agent.serverId, agentId: agent.id });
+        return true;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to unarchive session");
+        return false;
+      }
+    },
+    [toast, unarchiveAgent],
+  );
 
   const isProjectSessionArchiving = useCallback(
     (agent: AggregatedAgent) =>
-      isBulkArchivingSessions ||
       isArchivingAgent({
         serverId: agent.serverId,
         agentId: agent.id,
       }),
-    [isArchivingAgent, isBulkArchivingSessions],
+    [isArchivingAgent],
   );
 
   const handleRemoveProject = useCallback(() => {
@@ -2193,33 +2206,17 @@ function ProjectBlock({
             menuController={null}
             onRemoveProject={handleRemoveProject}
             removeProjectStatus={isRemovingProject ? "pending" : "idle"}
-            onSelectSessions={handleBeginSessionSelection}
-            canSelectSessions={archivableSessions.length > 0 && !sessionSelectionMode}
             dragHandleProps={dragHandleProps}
           />
 
           {!collapsed ? (
-            <>
-              {sessionSelectionMode ? (
-                <ProjectSessionSelectionToolbar
-                  selectedCount={selectedSessionIds.size}
-                  totalCount={archivableSessions.length}
-                  isArchiving={isBulkArchivingSessions}
-                  onCancel={handleCancelSessionSelection}
-                  onSelectAll={handleSelectAllSessions}
-                  onArchiveSelected={handleArchiveSelectedSessions}
-                />
-              ) : null}
-              <ProjectSessionList
-                data={projectSessions}
-                onAgentPress={handleAgentPress}
-                onArchiveAgent={handleArchiveAgent}
-                isAgentArchiving={isProjectSessionArchiving}
-                selectionMode={sessionSelectionMode}
-                selectedAgentIds={selectedSessionIds}
-                onToggleAgentSelected={handleToggleSelectedSession}
-              />
-            </>
+            <ProjectSessionList
+              data={projectSessions}
+              onAgentPress={handleAgentPress}
+              onArchiveAgent={handleArchiveAgent}
+              onUnarchiveAgent={handleUnarchiveAgent}
+              isAgentArchiving={isProjectSessionArchiving}
+            />
           ) : null}
         </>
       )}
@@ -2625,7 +2622,6 @@ const styles = StyleSheet.create((theme) => ({
     includeFontPadding: false,
   },
   projectSessionList: {
-    gap: theme.spacing[1],
     marginBottom: theme.spacing[1],
   },
   projectSessionSwipeContainer: {
@@ -2633,29 +2629,28 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
     borderRadius: theme.borderRadius.lg,
   },
-  projectSessionSwipeAction: {
+  projectSessionSwipeBackground: {
     position: "absolute",
     top: 0,
-    bottom: theme.spacing[1],
-    left: theme.spacing[3] + theme.spacing[3],
-    width: SIDEBAR_SESSION_SWIPE_ACTION_WIDTH,
+    right: 0,
+    bottom: 0,
+    left: 0,
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface0,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface2,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[1],
+    justifyContent: "flex-start",
   },
-  projectSessionSwipeActionText: {
-    color: theme.colors.destructive,
-    fontSize: theme.fontSize.xs,
-    fontWeight: "700",
+  projectSessionSwipeBackgroundUnarchive: {
+    backgroundColor: theme.colors.surface1,
+  },
+  projectSessionSwipeIconSlot: {
+    width: theme.spacing[3] + theme.spacing[3] + 36,
+    alignItems: "center",
+    justifyContent: "center",
   },
   projectSessionRow: {
     minHeight: 38,
-    marginBottom: theme.spacing[1],
     marginLeft: theme.spacing[3] + theme.spacing[3],
     paddingVertical: theme.spacing[2],
     paddingLeft: theme.spacing[2],
@@ -2668,9 +2663,6 @@ const styles = StyleSheet.create((theme) => ({
   projectSessionRowHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
-  projectSessionRowSelected: {
-    backgroundColor: theme.colors.surface2,
-  },
   projectSessionRowArchiving: {
     opacity: 0.62,
   },
@@ -2680,23 +2672,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-  },
-  projectSessionSelectionCircle: {
-    width: 18,
-    height: 18,
-    borderRadius: theme.borderRadius.full,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  projectSessionSelectionCircleSelected: {
-    backgroundColor: theme.colors.surface2,
-    borderColor: theme.colors.foregroundMuted,
-  },
-  projectSessionSelectionCircleDisabled: {
-    opacity: 0.4,
   },
   projectSessionContent: {
     flex: 1,
@@ -2735,48 +2710,6 @@ const styles = StyleSheet.create((theme) => ({
   projectSessionEmptyText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-  },
-  projectSessionSelectionToolbar: {
-    marginLeft: theme.spacing[3] + theme.spacing[3],
-    marginBottom: theme.spacing[1],
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface0,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-  },
-  projectSessionSelectionToolbarButton: {
-    minHeight: 30,
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  projectSessionSelectionToolbarText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    fontWeight: "600",
-  },
-  projectSessionSelectionArchiveButton: {
-    minHeight: 30,
-    marginLeft: "auto",
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: theme.colors.destructive,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  projectSessionSelectionArchiveButtonDisabled: {
-    opacity: 0.45,
-  },
-  projectSessionSelectionArchiveText: {
-    color: theme.colors.destructiveForeground,
-    fontSize: theme.fontSize.xs,
-    fontWeight: "700",
   },
   projectIcon: {
     width: "100%",
