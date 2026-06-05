@@ -17,7 +17,7 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, type Href } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -1073,6 +1073,7 @@ export interface SettingsScreenProps {
 
 export default function SettingsScreen({ view }: SettingsScreenProps) {
   const router = useRouter();
+  const params = useLocalSearchParams<{ returnTo?: string | string[] }>();
   const { theme } = useUnistyles();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const { settings, isLoading: settingsLoading, updateSettings } = useAppSettings();
@@ -1292,6 +1293,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   }, [router]);
 
   const handleBackToWorkspace = useCallback(() => {
+    const returnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
+    if (returnTo?.startsWith("/h/")) {
+      router.replace(returnTo as Href);
+      return;
+    }
     if (navigateToLastWorkspace()) {
       return;
     }
@@ -1300,7 +1306,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       return;
     }
     router.replace("/");
-  }, [anyOnlineServerId, router]);
+  }, [anyOnlineServerId, params.returnTo, router]);
 
   const detailHeader = ((): {
     title: string;

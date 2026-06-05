@@ -24,6 +24,8 @@ export function DraggableList<T>({
   ListHeaderComponent,
   ListEmptyComponent,
   showsVerticalScrollIndicator = true,
+  showsHorizontalScrollIndicator = false,
+  horizontal = false,
   enableDesktopWebScrollbar: _enableDesktopWebScrollbar = false,
   scrollEnabled = true,
   useDragHandle: _useDragHandle = false,
@@ -116,6 +118,8 @@ export function DraggableList<T>({
       ListHeaderComponent={ListHeaderComponent}
       ListEmptyComponent={ListEmptyComponent}
       showsVerticalScrollIndicator={showsVerticalScrollIndicator}
+      showsHorizontalScrollIndicator={showsHorizontalScrollIndicator}
+      horizontal={horizontal}
       scrollEnabled={scrollEnabled}
       extraData={extraData}
       simultaneousHandlers={simultaneousHandlers}

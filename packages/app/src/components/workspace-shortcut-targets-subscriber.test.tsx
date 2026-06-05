@@ -55,6 +55,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
       sidebarShortcutWorkspaceTargets: [],
     });
     useSidebarCollapsedSectionsStore.setState({
+      collapsedProjectKeysByServerId: {},
       collapsedProjectKeys: new Set(),
     });
     useSidebarOrderStore.setState({
@@ -101,6 +102,24 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
       { serverId: "srv", workspaceId: "ws-1" },
       { serverId: "srv", workspaceId: "ws-2" },
     ]);
+  });
+
+  it("uses collapsed project keys scoped to the current server", async () => {
+    act(() => {
+      useSidebarCollapsedSectionsStore.setState({
+        collapsedProjectKeysByServerId: {
+          srv: new Set(["project-1"]),
+          other: new Set(),
+        },
+        collapsedProjectKeys: new Set(),
+      });
+    });
+
+    await act(async () => {
+      root?.render(<WorkspaceShortcutTargetsSubscriber enabled={true} serverId="srv" />);
+    });
+
+    expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([]);
   });
 
   it("publishes status-mode shortcut targets in visual status order", async () => {

@@ -132,6 +132,7 @@ import {
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
+  composeWorkspaceHeaderSubtitle,
   resolveWorkspaceHeaderRenderState,
   type WorkspaceHeaderCheckoutState,
 } from "@/screens/workspace/workspace-header-source";
@@ -1015,6 +1016,7 @@ interface WorkspaceHeaderTitleBarProps {
   title: string;
   subtitle: string;
   showSubtitle: boolean;
+  hostName: string;
   currentBranchName: string | null;
   isGitCheckout: boolean;
   normalizedServerId: string;
@@ -1049,6 +1051,7 @@ function WorkspaceHeaderTitleBar({
   title,
   subtitle,
   showSubtitle,
+  hostName,
   currentBranchName,
   isGitCheckout,
   normalizedServerId,
@@ -1077,6 +1080,16 @@ function WorkspaceHeaderTitleBar({
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
 }: WorkspaceHeaderTitleBarProps) {
+  const resolvedSubtitle = useMemo(
+    () =>
+      composeWorkspaceHeaderSubtitle({
+        projectSubtitle: subtitle,
+        showProjectSubtitle: showSubtitle,
+        hostName,
+      }),
+    [hostName, showSubtitle, subtitle],
+  );
+
   return (
     <View style={styles.headerTitleContainer}>
       {isLoading ? (
@@ -1092,13 +1105,13 @@ function WorkspaceHeaderTitleBar({
             workspaceId={normalizedWorkspaceId}
             isGitCheckout={isGitCheckout}
           />
-          {showSubtitle ? (
+          {resolvedSubtitle.shouldShowSubtitle ? (
             <Text
               testID="workspace-header-subtitle"
               style={styles.headerProjectTitle}
               numberOfLines={1}
             >
-              {subtitle}
+              {resolvedSubtitle.subtitle}
             </Text>
           ) : null}
         </View>
@@ -1564,6 +1577,15 @@ function WorkspaceScreenContent({
   const normalizedWorkspaceId = useMemo(
     () => resolveWorkspaceRouteId({ routeWorkspaceId: workspaceId }) ?? "",
     [workspaceId],
+  );
+  const hosts = useHosts();
+  const workspaceHeaderHost = useMemo(
+    () => hosts.find((entry) => entry.serverId === normalizedServerId) ?? null,
+    [hosts, normalizedServerId],
+  );
+  const workspaceHeaderHostName = useMemo(
+    () => getHostDisplayName(workspaceHeaderHost, normalizedServerId),
+    [normalizedServerId, workspaceHeaderHost],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
@@ -3355,6 +3377,7 @@ function WorkspaceScreenContent({
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
                 showSubtitle={shouldShowWorkspaceHeaderSubtitle}
+                hostName={workspaceHeaderHostName}
                 currentBranchName={currentBranchName}
                 isGitCheckout={isGitCheckout}
                 normalizedServerId={normalizedServerId}

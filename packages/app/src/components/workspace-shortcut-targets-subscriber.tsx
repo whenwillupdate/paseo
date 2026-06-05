@@ -25,8 +25,8 @@ export function WorkspaceShortcutTargetsSubscriber({
   const groupMode = useSidebarViewStore((state) =>
     enabled && serverId ? state.getGroupMode(serverId) : "project",
   );
-  const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
-    (state) => state.collapsedProjectKeys,
+  const collapsedProjectKeys = useSidebarCollapsedSectionsStore((state) =>
+    state.getCollapsedProjectKeys(serverId),
   );
   const collapsedStatusGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedStatusGroupKeys,

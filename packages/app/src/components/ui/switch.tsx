@@ -19,12 +19,16 @@ interface SwitchProps {
   onValueChange?: (value: boolean) => void;
   disabled?: boolean;
   accessibilityLabel?: string;
+  accessibilityHint?: string;
   testID?: string;
   style?: StyleProp<ViewStyle>;
+  size?: "sm" | "ios";
 }
 
-const TRACK = { width: 34, height: 20 };
-const THUMB = 16;
+const SWITCH_SIZES = {
+  sm: { track: { width: 34, height: 20 }, thumb: 16 },
+  ios: { track: { width: 51, height: 31 }, thumb: 27 },
+} as const;
 
 const TIMING = { duration: 180, easing: Easing.inOut(Easing.ease) };
 
@@ -33,12 +37,13 @@ export function Switch({
   onValueChange,
   disabled = false,
   accessibilityLabel,
+  accessibilityHint,
   testID,
   style,
+  size = "sm",
 }: SwitchProps) {
   const { theme } = useUnistyles();
-  const track = TRACK;
-  const thumb = THUMB;
+  const { track, thumb } = SWITCH_SIZES[size];
   const padding = (track.height - thumb) / 2;
   const thumbTravel = track.width - thumb - padding * 2;
 
@@ -105,6 +110,7 @@ export function Switch({
       accessibilityRole="switch"
       accessibilityState={accessibilityState}
       accessibilityLabel={accessibilityLabel}
+      accessibilityHint={accessibilityHint}
       aria-checked={value}
       testID={testID}
       style={pressableStyle}

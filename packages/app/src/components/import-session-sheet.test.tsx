@@ -141,6 +141,7 @@ vi.mock("react-native", async () => {
 const mockSnapshot = vi.hoisted(() => ({
   current: {
     entries: undefined as ProviderSnapshotEntry[] | undefined,
+    error: null as string | null,
     supportsSnapshot: false,
   },
 }));
@@ -151,7 +152,7 @@ vi.mock("@/hooks/use-providers-snapshot", () => ({
     isLoading: false,
     isFetching: false,
     isRefreshing: false,
-    error: null,
+    error: mockSnapshot.current.error,
     supportsSnapshot: mockSnapshot.current.supportsSnapshot,
     refresh: vi.fn(),
     refetchIfStale: vi.fn(),
@@ -166,6 +167,7 @@ interface RenderOptions {
   cwd?: string | null;
   snapshot?: {
     entries?: ProviderSnapshotEntry[];
+    error?: string | null;
     supportsSnapshot?: boolean;
   };
 }
@@ -176,6 +178,7 @@ function renderSheet(
 ) {
   mockSnapshot.current = {
     entries: options?.snapshot?.entries,
+    error: options?.snapshot?.error ?? null,
     supportsSnapshot: options?.snapshot?.supportsSnapshot ?? false,
   };
 
@@ -314,6 +317,29 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).not.toHaveBeenCalled();
   });
 
+  it("shows a provider snapshot error instead of staying in the loading state", async () => {
+    const fetchRecentProviderSessions = vi.fn();
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: {
+          supportsSnapshot: true,
+          entries: undefined,
+          error: "provider snapshot unavailable",
+        },
+      },
+    );
+
+    await screen.findByText("Could not load importable providers.");
+    expect(screen.queryByText("Loading recent sessions...")).toBeNull();
+    expect(fetchRecentProviderSessions).not.toHaveBeenCalled();
+  });
+
   it("shows an empty state when there are no recent provider sessions to import", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
@@ -435,6 +461,7 @@ describe("ImportSessionSheet", () => {
     });
     mockSnapshot.current = {
       entries: [createSnapshotEntry("claude")],
+      error: null,
       supportsSnapshot: true,
     };
 

@@ -81,3 +81,29 @@ export function shouldRenderMissingWorkspaceDescriptor(input: {
 }): boolean {
   return !input.workspace && input.hasHydratedWorkspaces;
 }
+
+export function composeWorkspaceHeaderSubtitle(input: {
+  projectSubtitle: string;
+  showProjectSubtitle: boolean;
+  hostName: string | null | undefined;
+}): { subtitle: string; shouldShowSubtitle: boolean } {
+  const parts: string[] = [];
+  const projectSubtitle = trimNonEmpty(input.projectSubtitle);
+  const hostName = trimNonEmpty(input.hostName);
+
+  if (hostName) {
+    parts.push(hostName);
+  }
+  if (
+    input.showProjectSubtitle &&
+    projectSubtitle &&
+    !parts.some((part) => areHeaderLabelsEquivalent(part, projectSubtitle))
+  ) {
+    parts.push(projectSubtitle);
+  }
+
+  return {
+    subtitle: parts.join(" · "),
+    shouldShowSubtitle: parts.length > 0,
+  };
+}

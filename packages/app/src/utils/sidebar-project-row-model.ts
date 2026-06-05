@@ -27,10 +27,12 @@ export function isSidebarProjectFlattened(project: SidebarProjectEntry): boolean
 export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
   collapsed: boolean;
+  forceSection?: boolean;
 }): SidebarProjectRowModel {
-  const flattenedWorkspace = isSidebarProjectFlattened(input.project)
-    ? (input.project.workspaces[0] ?? null)
-    : null;
+  const flattenedWorkspace =
+    !input.forceSection && isSidebarProjectFlattened(input.project)
+      ? (input.project.workspaces[0] ?? null)
+      : null;
 
   if (flattenedWorkspace) {
     return {
@@ -41,7 +43,10 @@ export function buildSidebarProjectRowModel(input: {
     };
   }
 
-  const collapsible = input.project.projectKind === "git" || input.project.workspaces.length > 1;
+  const collapsible =
+    input.forceSection ||
+    input.project.projectKind === "git" ||
+    input.project.workspaces.length > 1;
 
   let chevron: "expand" | "collapse" | null;
   if (!collapsible) chevron = null;

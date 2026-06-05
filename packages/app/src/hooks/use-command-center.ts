@@ -17,6 +17,7 @@ import { getBindingIdForAction, getDefaultKeysForAction } from "@/keyboard/keybo
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
+import { isWeb } from "@/constants/platform";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { focusWithRetries } from "@/utils/web-focus";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
@@ -321,6 +322,7 @@ export function useCommandCenter() {
 
   useEffect(() => {
     if (!open) return;
+    if (!isWeb) return;
 
     const handler = (event: KeyboardEvent) => {
       const currentItems = itemsRef.current;

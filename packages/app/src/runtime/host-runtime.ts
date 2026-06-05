@@ -1593,6 +1593,43 @@ export class HostRuntimeStore {
     await this.persistHosts();
   }
 
+  async reorderHosts(serverIds: string[]): Promise<void> {
+    const requestedOrder = new Set<string>();
+    const normalizedOrder: string[] = [];
+    for (const rawServerId of serverIds) {
+      const serverId = rawServerId.trim();
+      if (!serverId || requestedOrder.has(serverId)) {
+        continue;
+      }
+      requestedOrder.add(serverId);
+      normalizedOrder.push(serverId);
+    }
+
+    const hostByServerId = new Map(this.hosts.map((host) => [host.serverId, host]));
+    const next: HostProfile[] = [];
+    for (const serverId of normalizedOrder) {
+      const host = hostByServerId.get(serverId);
+      if (host) {
+        next.push(host);
+      }
+    }
+    for (const host of this.hosts) {
+      if (!requestedOrder.has(host.serverId)) {
+        next.push(host);
+      }
+    }
+
+    if (
+      next.map((host) => host.serverId).join("\n") ===
+      this.hosts.map((host) => host.serverId).join("\n")
+    ) {
+      return;
+    }
+
+    this.setHostsAndSync(next);
+    await this.persistHosts();
+  }
+
   async removeConnection(serverId: string, connectionId: string): Promise<void> {
     const now = new Date().toISOString();
     const next = this.hosts
@@ -2096,6 +2133,7 @@ export interface HostMutations {
     label?: string,
   ) => Promise<HostProfile>;
   renameHost: (serverId: string, label: string) => Promise<void>;
+  reorderHosts: (serverIds: string[]) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;
 }
@@ -2110,6 +2148,7 @@ export function useHostMutations(): HostMutations {
       upsertConnectionFromOffer: (offer, label) => store.upsertConnectionFromOffer(offer, label),
       upsertConnectionFromOfferUrl: (url, label) => store.upsertConnectionFromOfferUrl(url, label),
       renameHost: (serverId, label) => store.renameHost(serverId, label),
+      reorderHosts: (serverIds) => store.reorderHosts(serverIds),
       removeHost: (serverId) => store.removeHost(serverId),
       removeConnection: (serverId, connectionId) => store.removeConnection(serverId, connectionId),
     }),

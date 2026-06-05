@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
   type CollapsedProjectsState,
+  getCollapsedProjectKeys,
   mergePersistedCollapsedProjects,
   serializeCollapsedProjects,
   setProjectCollapsed,
@@ -11,20 +12,27 @@ import {
 } from "./state";
 
 interface SidebarCollapsedSectionsState extends CollapsedProjectsState {
-  toggleProjectCollapsed: (projectKey: string) => void;
-  setProjectCollapsed: (projectKey: string, collapsed: boolean) => void;
+  getCollapsedProjectKeys: (serverId: string | null | undefined) => Set<string>;
+  toggleProjectCollapsed: (serverId: string | null | undefined, projectKey: string) => void;
+  setProjectCollapsed: (
+    serverId: string | null | undefined,
+    projectKey: string,
+    collapsed: boolean,
+  ) => void;
   toggleStatusGroupCollapsed: (statusGroupKey: string) => void;
 }
 
 export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
+      collapsedProjectKeysByServerId: {},
       collapsedProjectKeys: new Set(),
       collapsedStatusGroupKeys: new Set(),
-      toggleProjectCollapsed: (projectKey) =>
-        set((state) => toggleProjectCollapsed(state, projectKey)),
-      setProjectCollapsed: (projectKey, collapsed) =>
-        set((state) => setProjectCollapsed(state, projectKey, collapsed)),
+      getCollapsedProjectKeys: (serverId) => getCollapsedProjectKeys(get(), serverId),
+      toggleProjectCollapsed: (serverId, projectKey) =>
+        set((state) => toggleProjectCollapsed(state, serverId, projectKey)),
+      setProjectCollapsed: (serverId, projectKey, collapsed) =>
+        set((state) => setProjectCollapsed(state, serverId, projectKey, collapsed)),
       toggleStatusGroupCollapsed: (statusGroupKey) =>
         set((state) => toggleStatusGroupCollapsed(state, statusGroupKey)),
     }),
@@ -34,7 +42,9 @@ export const useSidebarCollapsedSectionsStore = create<SidebarCollapsedSectionsS
       partialize: (state) => serializeCollapsedProjects(state),
       merge: (persistedState, currentState) =>
         mergePersistedCollapsedProjects(
-          persistedState as { collapsedProjectKeys?: unknown } | undefined,
+          persistedState as
+            | { collapsedProjectKeysByServerId?: unknown; collapsedProjectKeys?: unknown }
+            | undefined,
           currentState,
         ),
     },

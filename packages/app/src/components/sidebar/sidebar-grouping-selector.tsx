@@ -9,6 +9,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSidebarViewStore, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import { isWeb as platformIsWeb } from "@/constants/platform";
 
@@ -21,6 +22,7 @@ const GROUP_MODE_ITEMS: Array<{ value: SidebarGroupMode; label: string }> = [
 ];
 
 export function SidebarGroupingSelector({ serverId }: { serverId: string | null }) {
+  const isMobileBreakpoint = useIsCompactFormFactor();
   const groupMode = useSidebarViewStore((state) =>
     serverId ? state.getGroupMode(serverId) : "project",
   );
@@ -37,10 +39,12 @@ export function SidebarGroupingSelector({ serverId }: { serverId: string | null 
   const triggerStyle = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.trigger,
+      isMobileBreakpoint && styles.triggerMobile,
       hovered && styles.triggerHovered,
     ],
-    [],
+    [isMobileBreakpoint],
   );
+  const iconSize = isMobileBreakpoint ? 18 : 14;
 
   return (
     <DropdownMenu>
@@ -50,7 +54,7 @@ export function SidebarGroupingSelector({ serverId }: { serverId: string | null 
         accessibilityLabel="Sidebar grouping"
         testID="sidebar-grouping-selector"
       >
-        <ThemedSettings2 size={14} uniProps={filterColorMapping} />
+        <ThemedSettings2 size={iconSize} uniProps={filterColorMapping} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" width={180} testID="sidebar-grouping-menu">
         <View style={styles.menuHeader}>
@@ -97,6 +101,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.md,
+  },
+  triggerMobile: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.borderRadius.lg,
   },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,

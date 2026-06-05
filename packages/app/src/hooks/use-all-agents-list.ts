@@ -90,8 +90,13 @@ export function useAllAgentsList(options?: {
     if (!serverId || connectionStatus !== "online") {
       return;
     }
-    void runtime.refreshAgentDirectory({ serverId }).catch(() => undefined);
-  }, [runtime, serverId, connectionStatus]);
+    void runtime
+      .refreshAgentDirectory({
+        serverId,
+        ...(includeArchived ? { filter: { includeArchived: true } } : {}),
+      })
+      .catch(() => undefined);
+  }, [runtime, serverId, connectionStatus, includeArchived]);
 
   const agents = useMemo(() => {
     if (!serverId || !liveAgents) {

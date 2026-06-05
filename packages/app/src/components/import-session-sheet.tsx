@@ -86,6 +86,7 @@ function buildSessionsQueriesConfig(args: {
 interface SheetStatusMessagesProps {
   isClientReady: boolean;
   isSnapshotUnsupported: boolean;
+  snapshotError: string | null;
   hasNoImportableProviders: boolean;
   isLoadingSessions: boolean;
   allQueriesErrored: boolean;
@@ -96,6 +97,7 @@ interface SheetStatusMessagesProps {
 function SheetStatusMessages({
   isClientReady,
   isSnapshotUnsupported,
+  snapshotError,
   hasNoImportableProviders,
   isLoadingSessions,
   allQueriesErrored,
@@ -108,6 +110,9 @@ function SheetStatusMessages({
   }
   if (isSnapshotUnsupported) {
     return <Text style={styles.statusText}>Update the host to import sessions.</Text>;
+  }
+  if (snapshotError) {
+    return <Text style={styles.statusText}>Could not load importable providers.</Text>;
   }
   return (
     <>
@@ -272,7 +277,11 @@ export function ImportSessionSheet({
 }: ImportSessionSheetProps) {
   const queryClient = useQueryClient();
 
-  const { entries: snapshotEntries, supportsSnapshot } = useProvidersSnapshot(serverId, {
+  const {
+    entries: snapshotEntries,
+    error: snapshotError,
+    supportsSnapshot,
+  } = useProvidersSnapshot(serverId, {
     cwd,
     enabled: visible,
   });
@@ -391,7 +400,8 @@ export function ImportSessionSheet({
   );
 
   const isSnapshotUnsupported = !supportsSnapshot;
-  const isWaitingForSnapshot = supportsSnapshot && snapshotEntries === undefined;
+  const isWaitingForSnapshot =
+    supportsSnapshot && snapshotEntries === undefined && snapshotError === null;
   const hasNoImportableProviders = providersToFetch !== null && providersToFetch.length === 0;
   const isQueryingProviders = queries.length > 0;
   const isLoadingSessions =
@@ -440,6 +450,7 @@ export function ImportSessionSheet({
       <SheetStatusMessages
         isClientReady={Boolean(client)}
         isSnapshotUnsupported={isSnapshotUnsupported}
+        snapshotError={snapshotError}
         hasNoImportableProviders={hasNoImportableProviders}
         isLoadingSessions={isLoadingSessions}
         allQueriesErrored={allQueriesErrored}

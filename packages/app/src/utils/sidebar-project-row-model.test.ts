@@ -91,6 +91,23 @@ describe("buildSidebarProjectRowModel", () => {
     expect(result).not.toHaveProperty("selected");
   });
 
+  it("keeps single-workspace non-git projects as expandable sections when forced", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        projectKind: "directory",
+        workspaces: [workspace({ workspaceId: "ws-non-git" })],
+      }),
+      collapsed: false,
+      forceSection: true,
+    });
+
+    expect(result).toEqual({
+      kind: "project_section",
+      chevron: "collapse",
+      trailingAction: "none",
+    });
+  });
+
   it("keeps single-workspace git projects as sections with the new worktree action", () => {
     const onlyWorkspace = workspace({
       workspaceId: "ws-main",

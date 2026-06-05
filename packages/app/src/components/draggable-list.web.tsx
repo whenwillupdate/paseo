@@ -11,6 +11,7 @@ import {
 } from "@dnd-kit/core";
 import {
   SortableContext,
+  horizontalListSortingStrategy,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
   useSortable,
@@ -27,7 +28,13 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
   x: 0,
 });
 
+const restrictToHorizontalAxis: Modifier = ({ transform }) => ({
+  ...transform,
+  y: 0,
+});
+
 const DND_MODIFIERS = [restrictToVerticalAxis];
+const HORIZONTAL_DND_MODIFIERS = [restrictToHorizontalAxis];
 const POINTER_ACTIVATION_CONFIG = {
   defaultDistance: 6,
   holdDelayMs: 250,
@@ -133,6 +140,8 @@ export function DraggableList<T>({
   ListHeaderComponent,
   ListEmptyComponent,
   showsVerticalScrollIndicator = true,
+  showsHorizontalScrollIndicator = false,
+  horizontal = false,
   enableDesktopWebScrollbar = false,
   scrollEnabled = true,
   extraData: _extraData,
@@ -188,6 +197,8 @@ export function DraggableList<T>({
           style={style}
           contentContainerStyle={contentContainerStyle}
           showsVerticalScrollIndicator={showCustomScrollbar ? false : showsVerticalScrollIndicator}
+          showsHorizontalScrollIndicator={showsHorizontalScrollIndicator}
+          horizontal={horizontal}
           onLayout={scrollbar.onLayout}
           onContentSizeChange={scrollbar.onContentSizeChange}
           onScroll={scrollbar.onScroll}
@@ -198,12 +209,15 @@ export function DraggableList<T>({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={DND_MODIFIERS}
+            modifiers={horizontal ? HORIZONTAL_DND_MODIFIERS : DND_MODIFIERS}
             onDragStart={handlers.onDragStart}
             onDragCancel={handlers.onDragCancel}
             onDragEnd={handlers.onDragEnd}
           >
-            <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+            <SortableContext
+              items={ids}
+              strategy={horizontal ? horizontalListSortingStrategy : verticalListSortingStrategy}
+            >
               {items.map((item, index) => {
                 const id = keyExtractor(item, index);
                 return (
@@ -229,12 +243,15 @@ export function DraggableList<T>({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={DND_MODIFIERS}
+            modifiers={horizontal ? HORIZONTAL_DND_MODIFIERS : DND_MODIFIERS}
             onDragStart={handlers.onDragStart}
             onDragCancel={handlers.onDragCancel}
             onDragEnd={handlers.onDragEnd}
           >
-            <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+            <SortableContext
+              items={ids}
+              strategy={horizontal ? horizontalListSortingStrategy : verticalListSortingStrategy}
+            >
               {items.map((item, index) => {
                 const id = keyExtractor(item, index);
                 return (

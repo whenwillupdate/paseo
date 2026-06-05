@@ -1,21 +1,21 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { buildSidebarShortcutModel } from "@/utils/sidebar-shortcuts";
-import { isSidebarProjectFlattened } from "@/utils/sidebar-project-row-model";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 
 export function useSidebarShortcutModel(input: {
+  serverId: string | null;
   projects: SidebarProjectEntry[];
   isInitialLoad: boolean;
 }) {
-  const { projects, isInitialLoad } = input;
-  const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
-    (state) => state.collapsedProjectKeys,
+  const { serverId, projects, isInitialLoad } = input;
+  const collapsedProjectKeys = useSidebarCollapsedSectionsStore((state) =>
+    state.getCollapsedProjectKeys(serverId),
   );
   const setProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.setProjectCollapsed,
   );
-  const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
+  const toggleScopedProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
   );
 
@@ -33,22 +33,31 @@ export function useSidebarShortcutModel(input: {
       return;
     }
 
-    const collapsibleProjectKeys = new Set(
-      projects
-        .filter((project) => !isSidebarProjectFlattened(project))
-        .map((project) => project.projectKey),
-    );
+    const collapsibleProjectKeys = new Set(projects.map((project) => project.projectKey));
     for (const key of collapsedProjectKeys) {
       if (!collapsibleProjectKeys.has(key)) {
-        setProjectCollapsed(key, false);
+        setProjectCollapsed(serverId, key, false);
       }
     }
-  }, [collapsedProjectKeys, isInitialLoad, projects, setProjectCollapsed]);
+  }, [collapsedProjectKeys, isInitialLoad, projects, serverId, setProjectCollapsed]);
+
+  const setScopedProjectCollapsed = useCallback(
+    (projectKey: string, collapsed: boolean) => {
+      setProjectCollapsed(serverId, projectKey, collapsed);
+    },
+    [serverId, setProjectCollapsed],
+  );
+  const toggleProjectCollapsed = useCallback(
+    (projectKey: string) => {
+      toggleScopedProjectCollapsed(serverId, projectKey);
+    },
+    [serverId, toggleScopedProjectCollapsed],
+  );
 
   return {
     collapsedProjectKeys,
     shortcutIndexByWorkspaceKey: shortcutModel.shortcutIndexByWorkspaceKey,
-    setProjectCollapsed,
+    setProjectCollapsed: setScopedProjectCollapsed,
     toggleProjectCollapsed,
   };
 }

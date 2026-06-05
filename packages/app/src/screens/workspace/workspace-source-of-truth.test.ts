@@ -5,6 +5,7 @@ vi.hoisted(() => {
 });
 
 import {
+  composeWorkspaceHeaderSubtitle,
   resolveWorkspaceHeader,
   resolveWorkspaceHeaderRenderState,
   shouldRenderMissingWorkspaceDescriptor,
@@ -159,5 +160,44 @@ describe("workspace source of truth consumption", () => {
         hasHydratedWorkspaces: false,
       }),
     ).toBe(false);
+  });
+
+  it("combines project and host names in the workspace subtitle", () => {
+    expect(
+      composeWorkspaceHeaderSubtitle({
+        projectSubtitle: "getpaseo/paseo",
+        showProjectSubtitle: true,
+        hostName: "Laptop",
+      }),
+    ).toEqual({
+      subtitle: "Laptop · getpaseo/paseo",
+      shouldShowSubtitle: true,
+    });
+  });
+
+  it("still shows the host name when the project subtitle is hidden", () => {
+    expect(
+      composeWorkspaceHeaderSubtitle({
+        projectSubtitle: "notes",
+        showProjectSubtitle: false,
+        hostName: "Laptop",
+      }),
+    ).toEqual({
+      subtitle: "Laptop",
+      shouldShowSubtitle: true,
+    });
+  });
+
+  it("dedupes matching project and host names in the workspace subtitle", () => {
+    expect(
+      composeWorkspaceHeaderSubtitle({
+        projectSubtitle: "Laptop",
+        showProjectSubtitle: true,
+        hostName: "laptop",
+      }),
+    ).toEqual({
+      subtitle: "laptop",
+      shouldShowSubtitle: true,
+    });
   });
 });

@@ -8,7 +8,7 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
-import { Folder } from "lucide-react-native";
+import { ChevronRight, Folder, FolderOpen } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useQuery } from "@tanstack/react-query";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -19,14 +19,29 @@ import { useOpenProject } from "@/hooks/use-open-project";
 import { buildWorkingDirectorySuggestions } from "@/utils/working-directory-suggestions";
 import { isNative } from "@/constants/platform";
 import { useActiveServerId } from "@/hooks/use-active-server-id";
+import {
+  buildPathBreadcrumbs,
+  normalizeBrowserPath,
+  parentBrowserPath,
+  uniquedDirectoryPaths,
+} from "@/utils/project-path-browser";
 
 interface PathRowProps {
   path: string;
+  label?: string;
   active: boolean;
   onSelect: (path: string) => void;
+  variant?: "directory" | "open";
 }
 
-function PathRow({ path, active, onSelect }: PathRowProps) {
+function lastPathSegment(path: string): string {
+  const normalized = normalizeBrowserPath(path);
+  if (normalized === "/" || normalized === "~") return normalized;
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? normalized;
+}
+
+function PathRow({ path, label, active, onSelect, variant = "directory" }: PathRowProps) {
   const { theme } = useUnistyles();
   const handlePress = useCallback(() => {
     onSelect(path);
@@ -48,13 +63,90 @@ function PathRow({ path, active, onSelect }: PathRowProps) {
     <Pressable style={pressableStyle} onPress={handlePress}>
       <View style={styles.rowContent}>
         <View style={styles.iconSlot}>
-          <Folder size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
+          {variant === "open" ? (
+            <FolderOpen size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
+          ) : (
+            <Folder size={16} strokeWidth={2.2} color={theme.colors.foregroundMuted} />
+          )}
         </View>
         <Text style={rowTextStyle} numberOfLines={1}>
-          {shortenPath(path)}
+          {label ?? shortenPath(path)}
         </Text>
       </View>
     </Pressable>
+  );
+}
+
+function BreadcrumbItem({
+  path,
+  label,
+  isLast,
+  onSelect,
+}: {
+  path: string;
+  label: string;
+  isLast: boolean;
+  onSelect: (path: string) => void;
+}) {
+  const { theme } = useUnistyles();
+  const handlePress = useCallback(() => {
+    onSelect(path);
+  }, [onSelect, path]);
+  const crumbStyle = useCallback(
+    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.breadcrumb,
+      (hovered || pressed) && styles.breadcrumbHovered,
+    ],
+    [],
+  );
+  const textStyle = useMemo(
+    () => [
+      styles.breadcrumbText,
+      { color: isLast ? theme.colors.foreground : theme.colors.foregroundMuted },
+    ],
+    [isLast, theme.colors.foreground, theme.colors.foregroundMuted],
+  );
+
+  return (
+    <View style={styles.breadcrumbItem}>
+      <Pressable
+        style={crumbStyle}
+        onPress={handlePress}
+        disabled={isLast}
+        accessibilityRole="button"
+        accessibilityLabel={`Go to ${label}`}
+      >
+        <Text style={textStyle} numberOfLines={1}>
+          {label}
+        </Text>
+      </Pressable>
+      {!isLast ? <ChevronRight size={12} color={theme.colors.foregroundMuted} /> : null}
+    </View>
+  );
+}
+
+function Breadcrumbs({ path, onSelect }: { path: string; onSelect: (path: string) => void }) {
+  const breadcrumbs = useMemo(() => buildPathBreadcrumbs(path), [path]);
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.breadcrumbsContent}
+      style={styles.breadcrumbs}
+    >
+      {breadcrumbs.map((crumb, index) => {
+        const isLast = index === breadcrumbs.length - 1;
+        return (
+          <BreadcrumbItem
+            key={crumb.path}
+            path={crumb.path}
+            label={crumb.label}
+            isLast={isLast}
+            onSelect={onSelect}
+          />
+        );
+      })}
+    </ScrollView>
   );
 }
 
@@ -70,24 +162,52 @@ export function ProjectPickerModal() {
   const recommendedPaths = useRecommendedProjectPaths(serverId);
 
   const inputRef = useRef<TextInput>(null);
-  const [query, setQuery] = useState("");
+  const [currentDirectory, setCurrentDirectory] = useState("~");
+  const [query, setQuery] = useState("~");
   const [activeIndex, setActiveIndex] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const openProject = useOpenProject(serverId);
+  const normalizedQuery = useMemo(() => normalizeBrowserPath(query), [query]);
+  const normalizedCurrentDirectory = useMemo(
+    () => normalizeBrowserPath(currentDirectory),
+    [currentDirectory],
+  );
+  const isBrowsingCurrentDirectory = normalizedQuery === normalizedCurrentDirectory;
 
   const directorySuggestionsQuery = useQuery({
-    queryKey: ["project-picker-directory-suggestions", serverId, query],
+    queryKey: [
+      "project-picker-directory-suggestions",
+      serverId,
+      normalizedCurrentDirectory,
+      normalizedQuery,
+      isBrowsingCurrentDirectory,
+    ],
     queryFn: async () => {
       if (!client) return [];
+      const options =
+        isBrowsingCurrentDirectory && normalizedCurrentDirectory !== "~"
+          ? {
+              cwd: normalizedCurrentDirectory,
+              query: "",
+              includeDirectories: true,
+              includeFiles: false,
+              limit: 100,
+            }
+          : {
+              query: normalizedQuery === "~" ? "~" : query,
+              includeDirectories: true,
+              includeFiles: false,
+              limit: 100,
+            };
       const result = await client.getDirectorySuggestions({
-        query,
-        includeDirectories: true,
-        includeFiles: false,
-        limit: 30,
+        ...options,
       });
-      return (
-        result.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ?? []
-      );
+      const paths =
+        result.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ?? [];
+      return uniquedDirectoryPaths({
+        cwd: normalizedCurrentDirectory,
+        paths,
+      });
     },
     enabled: Boolean(client) && isConnected && open,
     staleTime: 15_000,
@@ -95,6 +215,10 @@ export function ProjectPickerModal() {
   });
 
   const options = useMemo(() => {
+    if (isBrowsingCurrentDirectory) {
+      return directorySuggestionsQuery.data ?? [];
+    }
+
     const suggestedPaths = buildWorkingDirectorySuggestions({
       recommendedPaths,
       serverPaths: directorySuggestionsQuery.data ?? [],
@@ -105,7 +229,7 @@ export function ProjectPickerModal() {
       return suggestedPaths;
     }
     return [trimmedQuery, ...suggestedPaths];
-  }, [query, directorySuggestionsQuery.data, recommendedPaths]);
+  }, [directorySuggestionsQuery.data, isBrowsingCurrentDirectory, query, recommendedPaths]);
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -140,10 +264,22 @@ export function ProjectPickerModal() {
     setActiveIndex(0);
   }, []);
 
+  const handleNavigate = useCallback((path: string) => {
+    const normalized = normalizeBrowserPath(path);
+    setCurrentDirectory(normalized);
+    setQuery(normalized);
+    setActiveIndex(0);
+  }, []);
+
+  const handleParentDirectory = useCallback(() => {
+    handleNavigate(parentBrowserPath(normalizedCurrentDirectory));
+  }, [handleNavigate, normalizedCurrentDirectory]);
+
   // Reset state when opening/closing
   useEffect(() => {
     if (open) {
-      setQuery("");
+      setCurrentDirectory("~");
+      setQuery("~");
       setActiveIndex(0);
       const id = setTimeout(() => inputRef.current?.focus(), 0);
       return () => clearTimeout(id);
@@ -153,10 +289,11 @@ export function ProjectPickerModal() {
   // Clamp active index
   useEffect(() => {
     if (!open) return;
-    if (activeIndex >= options.length) {
-      setActiveIndex(options.length > 0 ? options.length - 1 : 0);
+    const keyboardRowCount = options.length + (isBrowsingCurrentDirectory ? 1 : 0);
+    if (activeIndex >= keyboardRowCount) {
+      setActiveIndex(keyboardRowCount > 0 ? keyboardRowCount - 1 : 0);
     }
-  }, [activeIndex, options.length, open]);
+  }, [activeIndex, isBrowsingCurrentDirectory, options.length, open]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -174,7 +311,12 @@ export function ProjectPickerModal() {
 
       if (key === "Enter") {
         event.preventDefault();
-        if (options.length > 0 && activeIndex < options.length) {
+        if (isBrowsingCurrentDirectory && activeIndex === 0) {
+          void handleSelectPath(normalizedCurrentDirectory);
+        } else if (isBrowsingCurrentDirectory && options.length > 0) {
+          const selectedPath = options[activeIndex - 1];
+          if (selectedPath) handleNavigate(selectedPath);
+        } else if (options.length > 0 && activeIndex < options.length) {
           void handleSelectPath(options[activeIndex]);
         } else if (query.trim()) {
           handleSubmitCustom();
@@ -183,13 +325,14 @@ export function ProjectPickerModal() {
       }
 
       if (key === "ArrowDown" || key === "ArrowUp") {
-        if (options.length === 0) return;
+        const keyboardRowCount = options.length + (isBrowsingCurrentDirectory ? 1 : 0);
+        if (keyboardRowCount === 0) return;
         event.preventDefault();
         setActiveIndex((current) => {
           const delta = key === "ArrowDown" ? 1 : -1;
           const next = current + delta;
-          if (next < 0) return options.length - 1;
-          if (next >= options.length) return 0;
+          if (next < 0) return keyboardRowCount - 1;
+          if (next >= keyboardRowCount) return 0;
           return next;
         });
       }
@@ -197,7 +340,18 @@ export function ProjectPickerModal() {
 
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [activeIndex, handleSelectPath, handleSubmitCustom, open, options, query, setOpen]);
+  }, [
+    activeIndex,
+    handleNavigate,
+    handleSelectPath,
+    handleSubmitCustom,
+    isBrowsingCurrentDirectory,
+    normalizedCurrentDirectory,
+    open,
+    options,
+    query,
+    setOpen,
+  ]);
 
   const panelStyle = useMemo(
     () => [
@@ -221,6 +375,10 @@ export function ProjectPickerModal() {
     () => [styles.emptyText, { color: theme.colors.foregroundMuted }],
     [theme.colors.foregroundMuted],
   );
+  const helperTextStyle = useMemo(
+    () => [styles.helperText, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
 
   if (!serverId) return null;
 
@@ -231,11 +389,12 @@ export function ProjectPickerModal() {
 
         <View style={panelStyle}>
           <View style={headerStyle}>
+            <Breadcrumbs path={normalizedCurrentDirectory} onSelect={handleNavigate} />
             <TextInput
               ref={inputRef}
               value={query}
               onChangeText={handleChangeQuery}
-              placeholder="Type a directory path..."
+              placeholder="Type or paste a directory path..."
               placeholderTextColor={theme.colors.foregroundMuted}
               style={inputStyle}
               autoCapitalize="none"
@@ -245,6 +404,9 @@ export function ProjectPickerModal() {
               returnKeyType="go"
               onSubmitEditing={handleSubmitCustom}
             />
+            <Text style={helperTextStyle} numberOfLines={1}>
+              Browse from ~, pick a folder below, or paste a full path.
+            </Text>
           </View>
 
           <ScrollView
@@ -254,17 +416,38 @@ export function ProjectPickerModal() {
             showsVerticalScrollIndicator={false}
           >
             {isSubmitting ? <Text style={emptyTextStyle}>Opening project...</Text> : null}
+            {!isSubmitting && isBrowsingCurrentDirectory ? (
+              <PathRow
+                path={normalizedCurrentDirectory}
+                label={`Open ${normalizedCurrentDirectory}`}
+                active={activeIndex === 0}
+                onSelect={handleSelectPath}
+                variant="open"
+              />
+            ) : null}
+            {!isSubmitting && isBrowsingCurrentDirectory && normalizedCurrentDirectory !== "~" ? (
+              <PathRow
+                path={parentBrowserPath(normalizedCurrentDirectory)}
+                label=".."
+                active={false}
+                onSelect={handleParentDirectory}
+              />
+            ) : null}
             {!isSubmitting && options.length === 0 && !query.trim() ? (
               <Text style={emptyTextStyle}>Start typing a path</Text>
             ) : null}
-            {!isSubmitting && !(options.length === 0 && !query.trim()) ? (
+            {!isSubmitting && options.length === 0 && query.trim() ? (
+              <Text style={emptyTextStyle}>No directories found</Text>
+            ) : null}
+            {!isSubmitting && options.length > 0 ? (
               <>
                 {options.map((path, index) => (
                   <PathRow
                     key={path}
                     path={path}
-                    active={index === activeIndex}
-                    onSelect={handleSelectPath}
+                    label={isBrowsingCurrentDirectory ? lastPathSegment(path) : shortenPath(path)}
+                    active={index + (isBrowsingCurrentDirectory ? 1 : 0) === activeIndex}
+                    onSelect={isBrowsingCurrentDirectory ? handleNavigate : handleSelectPath}
                   />
                 ))}
               </>
@@ -300,6 +483,32 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
     borderBottomWidth: 1,
+    gap: theme.spacing[2],
+  },
+  breadcrumbs: {
+    flexGrow: 0,
+  },
+  breadcrumbsContent: {
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  breadcrumbItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    maxWidth: 180,
+  },
+  breadcrumb: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+  },
+  breadcrumbHovered: {
+    backgroundColor: theme.colors.surface1,
+  },
+  breadcrumbText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "500",
   },
   input: {
     fontSize: theme.fontSize.lg,
@@ -337,5 +546,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[4],
     fontSize: theme.fontSize.base,
+  },
+  helperText: {
+    fontSize: theme.fontSize.xs,
   },
 }));
