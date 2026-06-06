@@ -146,13 +146,14 @@ function SessionBadge({
 }: {
   label: string;
   icon?: ReactElement;
-  tone?: "neutral" | "warning" | "danger";
+  tone?: "neutral" | "warning" | "danger" | "success";
 }) {
   const badgeStyle = useMemo(
     () => [
       styles.badge,
       tone === "warning" && styles.badgeWarning,
       tone === "danger" && styles.badgeDanger,
+      tone === "success" && styles.badgeSuccess,
     ],
     [tone],
   );
@@ -161,6 +162,7 @@ function SessionBadge({
       styles.badgeText,
       tone === "warning" && styles.badgeTextWarning,
       tone === "danger" && styles.badgeTextDanger,
+      tone === "success" && styles.badgeTextSuccess,
     ],
     [tone],
   );
@@ -192,6 +194,11 @@ function SessionRow({
   const agentKey = `${agent.serverId}:${agent.id}`;
   const isSelected = selectedAgentId === agentKey;
   const statusLabel = formatStatusLabel(agent.status);
+  const isRunning = agent.status === "running";
+  const statusLabelStyle = isRunning ? styles.sessionMetaTextRunning : styles.sessionMetaText;
+  const desktopStatusLabelStyle = isRunning
+    ? styles.columnMetaFixedRunning
+    : styles.columnMetaFixed;
   const projectPath = shortenPath(agent.cwd);
   const ProviderIcon = getProviderIcon(agent.provider);
 
@@ -238,7 +245,7 @@ function SessionRow({
             <SessionBadge label={`${agent.pendingPermissionCount} pending`} tone="warning" />
           ) : null}
           {!isMobile && showAttentionIndicator && agent.requiresAttention ? (
-            <SessionBadge label="Attention" tone="danger" />
+            <SessionBadge label="Attention" tone="success" />
           ) : null}
         </View>
         {isMobile && (
@@ -247,7 +254,7 @@ function SessionRow({
               {projectPath}
             </Text>
             <Text style={styles.sessionMetaSeparator}>·</Text>
-            <Text style={styles.sessionMetaText}>{statusLabel}</Text>
+            <Text style={statusLabelStyle}>{statusLabel}</Text>
             <Text style={styles.sessionMetaSeparator}>·</Text>
             <Text style={styles.sessionMetaText}>{timeAgo}</Text>
             {agent.serverLabel ? (
@@ -266,13 +273,13 @@ function SessionRow({
           <Text style={styles.columnMeta} numberOfLines={1}>
             {projectPath}
           </Text>
-          <Text style={styles.columnMetaFixed}>{statusLabel}</Text>
+          <Text style={desktopStatusLabelStyle}>{statusLabel}</Text>
           <Text style={styles.columnMetaFixed}>{timeAgo}</Text>
         </>
       )}
       {isMobile && showAttentionIndicator && agent.requiresAttention ? (
         <View style={styles.rowTrailing}>
-          <SessionBadge label="Attention" tone="danger" />
+          <SessionBadge label="Attention" tone="success" />
         </View>
       ) : null}
     </Pressable>
@@ -571,6 +578,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
+  sessionMetaTextRunning: {
+    maxWidth: "100%",
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.palette.green[500],
+  },
   sessionMetaSeparator: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
@@ -591,6 +603,13 @@ const styles = StyleSheet.create((theme) => ({
     width: 72,
     textAlign: "right" as const,
   },
+  columnMetaFixedRunning: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.palette.red[500],
+    flexShrink: 0,
+    width: 72,
+    textAlign: "right" as const,
+  },
   badge: {
     flexDirection: "row",
     alignItems: "center",
@@ -606,6 +625,9 @@ const styles = StyleSheet.create((theme) => ({
   badgeDanger: {
     backgroundColor: "rgba(239, 68, 68, 0.14)",
   },
+  badgeSuccess: {
+    backgroundColor: "rgba(34, 197, 94, 0.12)",
+  },
   badgeText: {
     fontSize: theme.fontSize.xs,
     fontWeight: theme.fontWeight.medium,
@@ -616,6 +638,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   badgeTextDanger: {
     color: theme.colors.palette.red[300],
+  },
+  badgeTextSuccess: {
+    color: theme.colors.palette.green[500],
   },
   sheetOverlay: {
     flex: 1,

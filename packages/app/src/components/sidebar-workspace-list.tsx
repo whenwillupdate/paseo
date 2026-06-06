@@ -242,6 +242,8 @@ interface SidebarWorkspaceListProps {
   listFooterComponent?: ReactElement | null;
   /** Gesture ref for coordinating with parent gestures (e.g., sidebar close) */
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
+  /** Whether archived agents are currently shown in the list */
+  showArchived?: boolean;
 }
 
 interface ProjectHeaderRowProps {
@@ -1161,15 +1163,17 @@ function ProjectSessionRow({
   onArchive,
   onUnarchive,
   isArchiving,
+  showArchived: _showArchived,
 }: {
   agent: AggregatedAgent;
   onPress: (agent: AggregatedAgent) => void;
   onArchive: (agent: AggregatedAgent) => Promise<boolean>;
   onUnarchive: (agent: AggregatedAgent) => Promise<boolean>;
   isArchiving: boolean;
+  showArchived?: boolean;
 }) {
+  void _showArchived;
   const { theme } = useUnistyles();
-  const isCompactFormFactor = useIsCompactFormFactor();
   const ProviderIcon = getProviderIcon(agent.provider);
   const providerKind = classifySidebarSessionProvider(agent.provider);
   const providerColor = providerCountColor(providerKind, theme);
@@ -1189,15 +1193,21 @@ function ProjectSessionRow({
   const iconScale = useRef(new Animated.Value(1)).current;
   const [hasMeasuredRow, setHasMeasuredRow] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [hasJustUnarchived, setHasJustUnarchived] = useState(false);
+  const [hasJustArchived, setHasJustArchived] = useState(false);
   const swipeEnabled =
-    Platform.OS === "ios" &&
-    isCompactFormFactor &&
-    (canArchive || canUnarchive) &&
-    !isArchiving &&
-    !isCommitting;
+    Platform.OS === "ios" && (canArchive || canUnarchive) && !isArchiving && !isCommitting;
   let statusLabel: string = agent.status;
-  if (agent.requiresAttention) {
+  let statusMetaStyle = styles.projectSessionMeta;
+  if (hasJustArchived || agent.archivedAt) {
+    statusLabel = "Archived";
+    statusMetaStyle = styles.projectSessionMeta;
+  } else if (agent.requiresAttention) {
     statusLabel = "Attention";
+    statusMetaStyle = styles.projectSessionMetaAttention;
+  } else if (agent.status === "running") {
+    statusLabel = "Running";
+    statusMetaStyle = styles.projectSessionMetaRunning;
   } else if (agent.status === "initializing") {
     statusLabel = "Starting";
   }
@@ -1251,7 +1261,7 @@ function ProjectSessionRow({
           : []),
       ]).start();
     },
-    [rowHeight, rowMargin, rowOpacity, swipeOffset, theme.spacing],
+    [iconScale, rowHeight, rowMargin, rowOpacity, swipeOffset, theme.spacing],
   );
 
   useEffect(() => {
@@ -1297,60 +1307,74 @@ function ProjectSessionRow({
       isCommittingRef.current = true;
       setIsCommitting(true);
 
-      const slideDistance = Math.max(
-        rowWidthRef.current + 48,
-        SIDEBAR_SESSION_SWIPE_ARCHIVE_THRESHOLD + 48,
-      );
-      const slideFinished = await startSidebarSessionAnimation(
-        Animated.parallel([
-          Animated.timing(swipeOffset, {
-            toValue: slideDistance,
-            duration: 180,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.timing(rowOpacity, {
-            toValue: 0,
-            duration: 160,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-        ]),
-      );
+      if (action === "unarchive") {
+        // Hide the "Archived" badge immediately for instant feedback
+        setHasJustUnarchived(true);
 
-      if (!slideFinished) {
+        // Unarchive: spring back to original position instead of sliding out,
+        // because the row stays in the list when the archive filter is on.
+        await startSidebarSessionAnimation(
+          Animated.parallel([
+            Animated.spring(swipeOffset, {
+              toValue: 0,
+              useNativeDriver: true,
+              bounciness: 4,
+              speed: 20,
+            }),
+            Animated.timing(rowOpacity, {
+              toValue: 1,
+              duration: 100,
+              useNativeDriver: true,
+            }),
+          ]),
+        );
+
+        const didComplete = await onUnarchive(agent);
         isCommittingRef.current = false;
         setIsCommitting(false);
-        resetSwipe();
+
+        if (!didComplete) {
+          setHasJustUnarchived(false);
+          resetSwipe();
+        }
         return;
       }
 
+      // Archive: spring back and mark as archived immediately for instant feedback
+      setHasJustArchived(true);
+
+      // Archive: spring back to original position (same as unarchive).
+      // The row stays if showArchived is on; unmounts naturally if off.
       await startSidebarSessionAnimation(
         Animated.parallel([
-          Animated.timing(rowHeight, {
+          Animated.spring(swipeOffset, {
             toValue: 0,
-            duration: 170,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: false,
+            useNativeDriver: true,
+            bounciness: 4,
+            speed: 20,
           }),
-          Animated.timing(rowMargin, {
-            toValue: 0,
-            duration: 170,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: false,
+          Animated.timing(rowOpacity, {
+            toValue: 1,
+            duration: 100,
+            useNativeDriver: true,
           }),
         ]),
       );
 
-      const didComplete = action === "archive" ? await onArchive(agent) : await onUnarchive(agent);
+      const didComplete = await onArchive(agent);
+      // Reset ref first so the effect below sees the correct committing state
       isCommittingRef.current = false;
+      // Explicitly restore the row before React re-renders from state changes.
+      // This prevents the row from visually disappearing during the data refresh.
+      restoreExpandedRow(false);
       setIsCommitting(false);
 
       if (!didComplete) {
+        setHasJustArchived(false);
         resetSwipe();
       }
     },
-    [agent, onArchive, onUnarchive, resetSwipe, rowHeight, rowMargin, rowOpacity, swipeOffset],
+    [agent, onArchive, onUnarchive, resetSwipe, restoreExpandedRow, rowOpacity, swipeOffset],
   );
 
   const handleArchive = useCallback(async () => {
@@ -1384,12 +1408,14 @@ function ProjectSessionRow({
       PanResponder.create({
         onMoveShouldSetPanResponderCapture: (_event, gestureState) =>
           swipeEnabled &&
-          gestureState.dx > 14 &&
-          resolveSidebarSessionSwipeDecision({
-            translationX: gestureState.dx,
-            translationY: gestureState.dy,
-          }) !== "ignore",
+          gestureState.dx > 8 &&
+          Math.abs(gestureState.dx) >= Math.abs(gestureState.dy),
+        onMoveShouldSetPanResponder: (_event, gestureState) =>
+          swipeEnabled &&
+          gestureState.dx > 8 &&
+          Math.abs(gestureState.dx) >= Math.abs(gestureState.dy),
         onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => swipeEnabled,
         onPanResponderGrant: () => {
           swipeOffset.stopAnimation((value) => {
             swipeStartOffsetRef.current = typeof value === "number" ? value : 0;
@@ -1449,7 +1475,7 @@ function ProjectSessionRow({
           resetSwipe();
         },
       }),
-    [canUnarchive, resetSwipe, runCommittedSwipe, swipeEnabled, swipeOffset],
+    [canUnarchive, iconScale, resetSwipe, runCommittedSwipe, swipeEnabled, swipeOffset],
   );
 
   const rowStyle = useCallback(
@@ -1483,6 +1509,10 @@ function ProjectSessionRow({
     ],
     [hasMeasuredRow, rowHeight, rowMargin],
   );
+  const swipeIconSlotStyle = useMemo(
+    () => [styles.projectSessionSwipeIconSlot, { transform: [{ scale: iconScale }] }],
+    [iconScale],
+  );
   const swipeBackgroundStyle = useMemo(
     () => [
       styles.projectSessionSwipeBackground,
@@ -1507,11 +1537,7 @@ function ProjectSessionRow({
       <Animated.View style={animatedContainerStyle}>
         {swipeEnabled ? (
           <View style={swipeBackgroundStyle} pointerEvents="none">
-            <Animated.View
-              style={[styles.projectSessionSwipeIconSlot, { transform: [{ scale: iconScale }] }]}
-            >
-              {swipeBackgroundIcon}
-            </Animated.View>
+            <Animated.View style={swipeIconSlotStyle}>{swipeBackgroundIcon}</Animated.View>
           </View>
         ) : null}
         <Animated.View
@@ -1540,11 +1566,11 @@ function ProjectSessionRow({
                 <Text style={styles.projectSessionTitle} numberOfLines={1}>
                   {title}
                 </Text>
-                {agent.archivedAt ? (
+                {(agent.archivedAt || hasJustArchived) && !hasJustUnarchived ? (
                   <Text style={styles.projectSessionArchivedBadge}>Archived</Text>
                 ) : null}
               </View>
-              <Text style={styles.projectSessionMeta} numberOfLines={1}>
+              <Text style={statusMetaStyle} numberOfLines={1}>
                 {statusLabel} · {timeAgo}
               </Text>
             </View>
@@ -1582,12 +1608,14 @@ function ProjectSessionList({
   onArchiveAgent,
   onUnarchiveAgent,
   isAgentArchiving,
+  showArchived,
 }: {
   data: SidebarProjectSessionData;
   onAgentPress: (agent: AggregatedAgent) => void;
   onArchiveAgent: (agent: AggregatedAgent) => Promise<boolean>;
   onUnarchiveAgent: (agent: AggregatedAgent) => Promise<boolean>;
   isAgentArchiving: (agent: AggregatedAgent) => boolean;
+  showArchived?: boolean;
 }) {
   if (data.agents.length === 0) {
     return (
@@ -1607,6 +1635,7 @@ function ProjectSessionList({
           onArchive={onArchiveAgent}
           onUnarchive={onUnarchiveAgent}
           isArchiving={isAgentArchiving(agent)}
+          showArchived={showArchived}
         />
       ))}
     </View>
@@ -1931,6 +1960,7 @@ function FlattenedProjectRow({
   removeProjectStatus,
   selectionEnabled,
   activeWorkspaceSelection,
+  showArchived: _showArchived,
 }: {
   project: SidebarProjectEntry;
   displayName: string;
@@ -1949,7 +1979,9 @@ function FlattenedProjectRow({
   removeProjectStatus?: "idle" | "pending";
   selectionEnabled: boolean;
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
+  showArchived?: boolean;
 }) {
+  void _showArchived;
   const workspace = useSidebarWorkspaceEntry(serverId, rowModel.workspace.workspaceId);
   const selected = isWorkspaceSelected({
     selection: activeWorkspaceSelection,
@@ -2022,6 +2054,7 @@ function ProjectBlock({
   isDragging,
   dragHandleProps,
   activeWorkspaceSelection,
+  showArchived,
 }: {
   project: SidebarProjectEntry;
   projectSessions: SidebarProjectSessionData;
@@ -2038,6 +2071,7 @@ function ProjectBlock({
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
+  showArchived?: boolean;
 }) {
   const rowModel = useMemo(
     () =>
@@ -2184,6 +2218,7 @@ function ProjectBlock({
           removeProjectStatus={isRemovingProject ? "pending" : "idle"}
           selectionEnabled={selectionEnabled}
           activeWorkspaceSelection={activeWorkspaceSelection}
+          showArchived={showArchived}
         />
       ) : (
         <>
@@ -2216,6 +2251,7 @@ function ProjectBlock({
               onArchiveAgent={handleArchiveAgent}
               onUnarchiveAgent={handleUnarchiveAgent}
               isAgentArchiving={isProjectSessionArchiving}
+              showArchived={showArchived}
             />
           ) : null}
         </>
@@ -2242,6 +2278,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.drag === next.drag &&
     previous.isDragging === next.isDragging &&
     previous.dragHandleProps === next.dragHandleProps &&
+    previous.showArchived === next.showArchived &&
     areProjectBlockSelectionsEqual(previous, next)
   );
 }
@@ -2290,6 +2327,7 @@ export function SidebarWorkspaceList({
   onAddProject,
   listFooterComponent,
   parentGestureRef,
+  showArchived = false,
 }: SidebarWorkspaceListProps) {
   const pathname = usePathname();
 
@@ -2316,6 +2354,7 @@ export function SidebarWorkspaceList({
       listFooterComponent={listFooterComponent}
       parentGestureRef={parentGestureRef}
       pathname={pathname}
+      showArchived={showArchived}
     />
   );
 }
@@ -2357,6 +2396,7 @@ function ProjectModeList({
   listFooterComponent,
   parentGestureRef,
   pathname,
+  showArchived = false,
 }: Omit<SidebarWorkspaceListProps, "groupMode" | "isRefreshing" | "onRefresh"> & {
   pathname: string;
 }) {
@@ -2438,6 +2478,7 @@ function ProjectModeList({
           isDragging={isActive}
           dragHandleProps={dragHandleProps}
           activeWorkspaceSelection={activeWorkspaceSelection}
+          showArchived={showArchived}
         />
       );
     },
@@ -2449,6 +2490,7 @@ function ProjectModeList({
       projectIconByProjectKey,
       projectSessionIndex,
       selectionEnabled,
+      showArchived,
       serverId,
       shortcutIndexByWorkspaceKey,
       showShortcutBadges,
@@ -2472,7 +2514,7 @@ function ProjectModeList({
           keyExtractor={projectKeyExtractor}
           renderItem={renderProject}
           onDragEnd={handleProjectDragEnd}
-          extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
+          extraData={projectSessionIndex}
           scrollEnabled={false}
           useDragHandle
           nestable={platformIsNative}
@@ -2698,6 +2740,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   projectSessionMeta: {
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    marginTop: 1,
+  },
+  projectSessionMetaRunning: {
+    color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.xs,
+    marginTop: 1,
+  },
+  projectSessionMetaAttention: {
+    color: theme.colors.palette.green[500],
     fontSize: theme.fontSize.xs,
     marginTop: 1,
   },

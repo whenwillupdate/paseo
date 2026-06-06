@@ -1049,6 +1049,7 @@ function MobileSidebar({
                 onWorkspacePress={handleWorkspacePress}
                 onAddProject={handleOpenProject}
                 parentGestureRef={closeGestureRef}
+                showArchived={showArchived}
               />
             )}
           </View>
